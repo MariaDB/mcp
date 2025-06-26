@@ -172,7 +172,10 @@ HF_MODEL="BAAI/bge-m3"
    ```
 3. **Install dependencies**
    ```bash
-   uv pip sync
+   uv pip compile pyproject.toml -o uv.lock
+   ```
+   ```bash
+   uv pip sync uv.lock
    ```
 4. **Create `.env`** in the project root (see [Configuration](#configuration--environment-variables))
 5. **Run the server**
