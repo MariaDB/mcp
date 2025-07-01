@@ -3,14 +3,14 @@ services:
     image: mariadb:11
     container_name: mariadb
     environment:
-      MARIADB_ROOT_PASSWORD: password
+      MARIADB_ROOT_PASSWORD: rootpassword123
       MARIADB_DATABASE: demo
       MARIADB_USER: user
-      MARIADB_PASSWORD: password
+      MARIADB_PASSWORD: password123
     ports:
       - "3306:3306"
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-p'password'"]
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-p'rootpassword123'"]
       interval: 5s
       timeout: 3s
       retries: 10
