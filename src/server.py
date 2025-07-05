@@ -112,7 +112,7 @@ class MariaDBServer:
             logger.error("Connection pool is not initialized.")
             raise RuntimeError("Database connection pool not available.")
 
-        allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
+        allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE', 'EXPLAIN')
         query_upper = sql.strip().upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
 
@@ -428,6 +428,52 @@ class MariaDBServer:
             error_message = f"Failed to create database '{database_name}'."
             logger.error(f"TOOL ERROR: create_database. {error_message} Error: {e}", exc_info=True)
             raise RuntimeError(f"{error_message} Reason: {str(e)}")
+
+    async def explain_query(self, sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Executes EXPLAIN on a SQL query to show the execution plan.
+        This helps analyze query performance and optimization opportunities.
+        Example `parameters`: ["value1", 123] corresponding to %s placeholders in `sql_query`.
+        """
+        logger.info(f"TOOL START: explain_query called. database_name={database_name}, sql_query={sql_query[:100]}, parameters={parameters}")
+        if database_name and not database_name.isidentifier():
+            logger.warning(f"TOOL WARNING: explain_query called with invalid database_name: {database_name}")
+            raise ValueError(f"Invalid database name provided: {database_name}")
+        
+        # Add EXPLAIN keyword to the query
+        explain_sql = f"EXPLAIN {sql_query.strip()}"
+        param_tuple = tuple(parameters) if parameters is not None else None
+        
+        try:
+            results = await self._execute_query(explain_sql, params=param_tuple, database=database_name)
+            logger.info(f"TOOL END: explain_query completed. Execution plan rows returned: {len(results)}.")
+            return results
+        except Exception as e:
+            logger.error(f"TOOL ERROR: explain_query failed for database_name={database_name}, sql_query={sql_query[:100]}, parameters={parameters}: {e}", exc_info=True)
+            raise
+
+    async def explain_query_extended(self, sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Executes EXPLAIN EXTENDED on a SQL query to show detailed execution plan with additional information.
+        This provides more comprehensive analysis including filtered rows percentage and extra information.
+        Example `parameters`: ["value1", 123] corresponding to %s placeholders in `sql_query`.
+        """
+        logger.info(f"TOOL START: explain_query_extended called. database_name={database_name}, sql_query={sql_query[:100]}, parameters={parameters}")
+        if database_name and not database_name.isidentifier():
+            logger.warning(f"TOOL WARNING: explain_query_extended called with invalid database_name: {database_name}")
+            raise ValueError(f"Invalid database name provided: {database_name}")
+        
+        # Add EXPLAIN EXTENDED keyword to the query
+        explain_sql = f"EXPLAIN EXTENDED {sql_query.strip()}"
+        param_tuple = tuple(parameters) if parameters is not None else None
+        
+        try:
+            results = await self._execute_query(explain_sql, params=param_tuple, database=database_name)
+            logger.info(f"TOOL END: explain_query_extended completed. Extended execution plan rows returned: {len(results)}.")
+            return results
+        except Exception as e:
+            logger.error(f"TOOL ERROR: explain_query_extended failed for database_name={database_name}, sql_query={sql_query[:100]}, parameters={parameters}: {e}", exc_info=True)
+            raise
 
     async def create_vector_store_tool(self,
                                   database_name: str,
@@ -772,6 +818,8 @@ class MariaDBServer:
         self.mcp.add_tool(self.get_table_schema_with_relations)
         self.mcp.add_tool(self.execute_sql)
         self.mcp.add_tool(self.create_database)
+        self.mcp.add_tool(self.explain_query)
+        self.mcp.add_tool(self.explain_query_extended)
         if EMBEDDING_PROVIDER is not None:
             self.mcp.add_tool(self.create_vector_store)
             self.mcp.add_tool(self.list_vector_stores)
