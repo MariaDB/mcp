@@ -62,7 +62,7 @@ class MariaDBServer:
 
     async def initialize_pool(self):
         """Initializes the asyncmy connection pool within the running event loop."""
-        if not all([DB_USER, DB_PASSWORD]):
+        if DB_USER is None:
              logger.error("Cannot initialize pool due to missing database credentials.")
              raise ConnectionError("Missing database credentials for pool initialization.")
 
