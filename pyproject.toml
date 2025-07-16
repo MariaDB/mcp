@@ -3,7 +3,7 @@ name = "mariadb-server"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10, <3.13"
 dependencies = [
     "asyncmy>=0.2.10",
     "fastmcp[cli]==2.2.8",
@@ -11,6 +11,5 @@ dependencies = [
     "google-generativeai>=0.8.5",
     "openai>=1.78.1",
     "python-dotenv>=1.1.0",
-    "sentence-transformers>=4.1.0",
-    "asyncmy>=0.2.10"
+    "sentence-transformers>=4.1.0"
 ]
