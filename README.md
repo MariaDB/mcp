@@ -24,6 +24,8 @@ The MCP MariaDB Server exposes a set of tools for interacting with MariaDB datab
 - Listing databases and tables
 - Retrieving table schemas
 - Executing safe, read-only SQL queries
+- Query performance analysis with EXPLAIN and EXPLAIN EXTENDED
+- Comprehensive tool usage guide for LLM self-discovery
 - Creating and managing vector stores for embedding-based search
 - Integrating with embedding providers (currently OpenAI, Gemini, and HuggingFace) (optional)
 
@@ -66,6 +68,18 @@ The MCP MariaDB Server exposes a set of tools for interacting with MariaDB datab
 - **create_database**
   - Creates a new database if it doesn't exist.
   - Parameters: `database_name` (string, required)  
+
+### Query Performance Analysis Tools
+
+- **explain_query**
+  - Executes EXPLAIN on a SQL query to show the execution plan for performance analysis.
+  - Parameters: `sql_query` (string, required), `database_name` (string, required), `parameters` (list, optional)
+  - _Note: Helps analyze query performance and optimization opportunities. Does not execute the actual query._
+
+- **explain_query_extended**
+  - Executes EXPLAIN EXTENDED on a SQL query to show detailed execution plan with additional information.
+  - Parameters: `sql_query` (string, required), `database_name` (string, required), `parameters` (list, optional)
+  - _Note: Provides comprehensive analysis including filtered rows percentage and extra optimization details._
 
 ### Vector Store & Embedding Tools (optional)
 
