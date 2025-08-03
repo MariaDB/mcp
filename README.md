@@ -130,29 +130,43 @@ A vector store table has the following columns:
 
 All configuration is via environment variables (typically set in a `.env` file):
 
-| Variable               | Description                                            | Required | Default      |
-|------------------------|--------------------------------------------------------|----------|--------------|
-| `DB_HOST`              | MariaDB host address                                   | Yes      | `localhost`  |
-| `DB_PORT`              | MariaDB port                                           | No       | `3306`       |
-| `DB_USER`              | MariaDB username                                       | Yes      |              |
-| `DB_PASSWORD`          | MariaDB password                                       | Yes      |              |
-| `DB_NAME`              | Default database (optional; can be set per query)      | No       |              |
-| `MCP_READ_ONLY`        | Enforce read-only SQL mode (`true`/`false`)            | No       | `true`       |
-| `MCP_MAX_POOL_SIZE`    | Max DB connection pool size                            | No       | `10`         |
-| `EMBEDDING_PROVIDER`   | Embedding provider (`openai`/`gemini`/`huggingface`)   | No     |`None`(Disabled)|
-| `OPENAI_API_KEY`       | API key for OpenAI embeddings                          | Yes (if EMBEDDING_PROVIDER=openai) | |
-| `GEMINI_API_KEY`       | API key for Gemini embeddings                          | Yes (if EMBEDDING_PROVIDER=gemini) | |
-| `HF_MODEL`             | Open models from Huggingface                           | Yes (if EMBEDDING_PROVIDER=huggingface) | |
+| Variable                 | Description                                          | Required                                | Default          |
+| ------------------------ | ---------------------------------------------------- | --------------------------------------- | ---------------- |
+| `DB_HOST`                | MariaDB host address                                 | Yes                                     | `localhost`      |
+| `DB_PORT`                | MariaDB port                                         | No                                      | `3306`           |
+| `DB_USER`                | MariaDB username                                     | Yes                                     |                  |
+| `DB_PASSWORD`            | MariaDB password                                     | Yes                                     |                  |
+| `DB_NAME`                | Default database (optional; can be set per query)    | No                                      |                  |
+| `DB_SSL`                 | Enable SSL/TLS connections (`true`/`false`)          | No                                      | `false`          |
+| `DB_SSL_CA`              | Path to SSL certificate authority file               | No                                      |                  |
+| `DB_SSL_CERT`            | Path to SSL client certificate file                  | No                                      |                  |
+| `DB_SSL_KEY`             | Path to SSL client private key file                  | No                                      |                  |
+| `DB_SSL_VERIFY_CERT`     | Verify SSL certificate (`true`/`false`)              | No                                      | `true`          |
+| `DB_SSL_VERIFY_IDENTITY` | Verify SSL server identity (`true`/`false`)          | No                                      | `false`          |
+| `MCP_READ_ONLY`          | Enforce read-only SQL mode (`true`/`false`)          | No                                      | `true`           |
+| `MCP_MAX_POOL_SIZE`      | Max DB connection pool size                          | No                                      | `10`             |
+| `EMBEDDING_PROVIDER`     | Embedding provider (`openai`/`gemini`/`huggingface`) | No                                      | `None`(Disabled) |
+| `OPENAI_API_KEY`         | API key for OpenAI embeddings                        | Yes (if EMBEDDING_PROVIDER=openai)      |                  |
+| `GEMINI_API_KEY`         | API key for Gemini embeddings                        | Yes (if EMBEDDING_PROVIDER=gemini)      |                  |
+| `HF_MODEL`               | Open models from Huggingface                         | Yes (if EMBEDDING_PROVIDER=huggingface) |                  |
 
 #### Example `.env` file
 
-**With Embedding Support (OpenAI):**
+**With Embedding Support (OpenAI) and SSL:**
 ```dotenv
 DB_HOST=localhost
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
 DB_PORT=3306
 DB_NAME=your_default_database
+
+# SSL Configuration
+DB_SSL=true
+DB_SSL_CA=/path/to/ca-cert.pem
+DB_SSL_CERT=/path/to/client-cert.pem
+DB_SSL_KEY=/path/to/client-key.pem
+DB_SSL_VERIFY_CERT=true
+DB_SSL_VERIFY_IDENTITY=false
 
 MCP_READ_ONLY=true
 MCP_MAX_POOL_SIZE=10
@@ -174,6 +188,14 @@ MCP_READ_ONLY=true
 MCP_MAX_POOL_SIZE=10
 ```
 
+**SSL Configuration Notes:**
+
+- Set `DB_SSL=true` to enable SSL/TLS connections
+- Certificate paths should be absolute paths to the certificate files
+- Three levels of SSL verification:
+    1. **Basic SSL** (`DB_SSL=true`, no certificates): Encrypts connection without certificate verification
+    2. **Certificate verification** (`DB_SSL_VERIFY_CERT=true`): Verifies server certificate against CA
+    3. **Full verification** (`DB_SSL_VERIFY_CERT=true`, `DB_SSL_VERIFY_IDENTITY=true`): Verifies certificate and server identity
 ---
 
 ## Installation & Setup
