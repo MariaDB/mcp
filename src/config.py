@@ -52,6 +52,14 @@ DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_NAME = os.getenv("DB_NAME")
 
+# --- SSL Configuration ---
+DB_SSL = os.getenv("DB_SSL", "false").lower() == "true"
+DB_SSL_CA = os.getenv("DB_SSL_CA")  # Path to CA certificate
+DB_SSL_CERT = os.getenv("DB_SSL_CERT")  # Path to client certificate
+DB_SSL_KEY = os.getenv("DB_SSL_KEY")  # Path to client private key
+DB_SSL_VERIFY_CERT = os.getenv("DB_SSL_VERIFY_CERT", "true").lower() == "true"
+DB_SSL_VERIFY_IDENTITY = os.getenv("DB_SSL_VERIFY_IDENTITY", "false").lower() == "true"
+
 # --- MCP Server Configuration ---
 # Read-only mode
 MCP_READ_ONLY = os.getenv("MCP_READ_ONLY", "true").lower() == "true"
