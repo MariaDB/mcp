@@ -11,7 +11,7 @@ from fastmcp import FastMCP, Context
 
 # Import configuration settings
 from config import (
-    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
+    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
     MCP_READ_ONLY, MCP_MAX_POOL_SIZE, EMBEDDING_PROVIDER,
     logger
 )
@@ -71,7 +71,7 @@ class MariaDBServer:
             return
 
         try:
-            logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
+            logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE}, charset: {DB_CHARSET})")
             self.pool = await asyncmy.create_pool(
                 host=DB_HOST,
                 port=DB_PORT,
@@ -81,7 +81,8 @@ class MariaDBServer:
                 minsize=1,
                 maxsize=MCP_MAX_POOL_SIZE,
                 autocommit=self.autocommit,
-                pool_recycle=3600
+                pool_recycle=3600,
+                charset=DB_CHARSET
             )
             logger.info("Connection pool initialized successfully.")
         except AsyncMyError as e:
