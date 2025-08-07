@@ -137,6 +137,7 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `DB_USER`              | MariaDB username                                       | Yes      |              |
 | `DB_PASSWORD`          | MariaDB password                                       | Yes      |              |
 | `DB_NAME`              | Default database (optional; can be set per query)      | No       |              |
+| `DB_CHARSET`           | Character set for database connection (e.g., `cp1251`) | No       | MariaDB default |
 | `MCP_READ_ONLY`        | Enforce read-only SQL mode (`true`/`false`)            | No       | `true`       |
 | `MCP_MAX_POOL_SIZE`    | Max DB connection pool size                            | No       | `10`         |
 | `EMBEDDING_PROVIDER`   | Embedding provider (`openai`/`gemini`/`huggingface`)   | No     |`None`(Disabled)|
