@@ -186,7 +186,13 @@ MCP_MAX_POOL_SIZE=10
 
 ### Steps
 
-1. **Clone the repository**
+1. **Clone and enter the repository**
+   ```bash
+   git clone https://github.com/MariaDB/mcp.git ./mariadb-mcp
+   ```
+   ```bash
+   cd ./mariadb-mcp/
+   ```
 2. **Install `uv`** (if not already):
    ```bash
    pip install uv
@@ -194,6 +200,9 @@ MCP_MAX_POOL_SIZE=10
 3. **Install dependencies**
    ```bash
    uv pip compile pyproject.toml -o uv.lock
+   ```
+   ```bash
+   uv venv
    ```
    ```bash
    uv pip sync uv.lock
