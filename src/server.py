@@ -766,9 +766,6 @@ class MariaDBServer:
              logger.error("Cannot register tools: Database pool is not initialized.")
              raise RuntimeError("Database pool must be initialized before registering tools.")
 
-        # For FastMCP 2.12.0, we need to use the tool decorator directly
-        # Since we can't use decorators on instance methods directly, 
-        # we'll wrap them as functions
         @self.mcp.tool
         async def list_databases() -> List[str]:
             """Lists all accessible databases on the connected MariaDB server."""
