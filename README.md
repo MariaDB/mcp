@@ -301,7 +301,7 @@ MCP_MAX_POOL_SIZE=10
 {
   "servers": {
     "mariadb-mcp-server": {
-      "url": "http://{host}:9001",
+      "url": "http://{host}:9001/sse",
       "type": "sse"
     }
   }
