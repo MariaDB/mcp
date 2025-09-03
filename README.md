@@ -215,12 +215,6 @@ MCP_MAX_POOL_SIZE=10
    ```bash
    python server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
    ```
-   
-   **HTTPS Transport (with SSL certificates):**
-   ```bash
-   python server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp \
-     --ssl-keyfile /path/to/key.pem --ssl-certfile /path/to/cert.pem
-   ```
 
 ---
 
@@ -314,7 +308,7 @@ MCP_MAX_POOL_SIZE=10
 }
 ```
 
-### Option 3: HTTP Transport (Recommended for production)
+### Option 3: HTTP Transport
 ```json
 {
   "servers": {
@@ -326,17 +320,6 @@ MCP_MAX_POOL_SIZE=10
 }
 ```
 
-### Option 4: HTTPS Transport (Secure)
-```json
-{
-  "servers": {
-    "mariadb-mcp-server": {
-      "url": "https://{host}:9001/mcp",
-      "type": "streamable-http"
-    }
-  }
-}
-```
 ---
 
 ## Logging

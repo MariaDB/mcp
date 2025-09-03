@@ -828,7 +828,7 @@ class MariaDBServer:
         logger.info("Registered MCP tools explicitly.")
 
     # --- Async Main Server Logic ---
-    async def run_async_server(self, transport="stdio", host="127.0.0.1", port=9001, path="/mcp", ssl_keyfile=None, ssl_certfile=None):
+    async def run_async_server(self, transport="stdio", host="127.0.0.1", port=9001, path="/mcp"):
         """
         Initializes pool, registers tools, and runs the appropriate async MCP listener.
         This method should be the target for anyio.run().
@@ -847,15 +847,7 @@ class MariaDBServer:
                 logger.info(f"Starting MCP server via {transport} on {host}:{port}...")
             elif transport == "http":
                 transport_kwargs = {"host": host, "port": port, "path": path}
-                if ssl_keyfile and ssl_certfile:
-                    # SSL parameters need to be passed through uvicorn_config
-                    transport_kwargs["uvicorn_config"] = {
-                        "ssl_keyfile": ssl_keyfile,
-                        "ssl_certfile": ssl_certfile
-                    }
-                    logger.info(f"Starting MCP server via {transport} with HTTPS on {host}:{port}{path}...")
-                else:
-                    logger.info(f"Starting MCP server via {transport} on {host}:{port}{path}...")
+                logger.info(f"Starting MCP server via {transport} on {host}:{port}{path}...")
             elif transport == "stdio":
                  logger.info(f"Starting MCP server via {transport}...")
             else:
@@ -886,10 +878,6 @@ if __name__ == "__main__":
                         help='Port for SSE or HTTP transport')
     parser.add_argument('--path', type=str, default='/mcp',
                         help='Path for HTTP transport (default: /mcp)')
-    parser.add_argument('--ssl-keyfile', type=str, default=None,
-                        help='SSL key file for HTTPS')
-    parser.add_argument('--ssl-certfile', type=str, default=None,
-                        help='SSL certificate file for HTTPS')
     args = parser.parse_args()
 
     # 1. Create the server instance
@@ -903,9 +891,7 @@ if __name__ == "__main__":
                     transport=args.transport, 
                     host=args.host, 
                     port=args.port, 
-                    path=args.path,
-                    ssl_keyfile=args.ssl_keyfile,
-                    ssl_certfile=args.ssl_certfile)
+                    path=args.path)
         )
         logger.info("Server finished gracefully.")
 
