@@ -870,7 +870,7 @@ if __name__ == "__main__":
     parser.add_argument('--transport', type=str, default='stdio', choices=['stdio', 'sse', 'http'],
                         help='MCP transport protocol (stdio, sse, or http)')
     parser.add_argument('--host', type=str, default='127.0.0.1',
-                        help='Host for SSE transport')
+                        help='Host for SSE or HTTP transport')
     parser.add_argument('--port', type=int, default=9001,
                         help='Port for SSE or HTTP transport')
     parser.add_argument('--path', type=str, default='/mcp',
