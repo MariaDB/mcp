@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import argparse
+import re
 from typing import List, Dict, Any, Optional
 from functools import partial 
 
@@ -113,7 +114,15 @@ class MariaDBServer:
             raise RuntimeError("Database connection pool not available.")
 
         allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
-        query_upper = sql.strip().upper()
+        
+        # Strip SQL comments from query
+        # Remove single-line comments (-- comment)
+        sql_no_comments = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
+        # Remove multi-line comments (/* comment */)
+        sql_no_comments = re.sub(r'/\*.*?\*/', '', sql_no_comments, flags=re.DOTALL)
+        sql_no_comments = sql_no_comments.strip()
+        
+        query_upper = sql_no_comments.upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
 
         if self.is_read_only and not is_allowed_read_query:
