@@ -124,6 +124,16 @@ A vector store table has the following columns:
 - `embedding`: VECTOR type (indexed for similarity search)
 - `metadata`: JSON (optional metadata)
 
+## Available Prompts
+
+- **explain_table**
+  - Provides a detailed explanation of a database table's structure, relationships, and usage.
+  - Parameters: `table_name` (string, required)
+
+- **query_tuning**
+  - Analyzes a SQL query for performance optimization opportunities.
+  - Parameters: `original_query` (string, required)
+
 ---
 
 ## Configuration & Environment Variables
