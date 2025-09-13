@@ -137,6 +137,7 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `DB_USER`                | MariaDB username                                     | Yes                                     |                  |
 | `DB_PASSWORD`            | MariaDB password                                     | Yes                                     |                  |
 | `DB_NAME`                | Default database (optional; can be set per query)    | No                                      |                  |
+| `DB_CHARSET`           | Character set for database connection (e.g., `cp1251`) | No       | MariaDB default |
 | `DB_SSL`                 | Enable SSL/TLS connections (`true`/`false`)          | No                                      | `false`          |
 | `DB_SSL_CA`              | Path to SSL certificate authority file               | No                                      |                  |
 | `DB_SSL_CERT`            | Path to SSL client certificate file                  | No                                      |                  |

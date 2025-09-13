@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import argparse
+import re
 from typing import List, Dict, Any, Optional
 from functools import partial 
 import os
@@ -13,7 +14,7 @@ from fastmcp import FastMCP, Context
 
 # Import configuration settings
 from config import (
-    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
+    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
     DB_SSL, DB_SSL_CA, DB_SSL_CERT, DB_SSL_KEY, DB_SSL_VERIFY_CERT, DB_SSL_VERIFY_IDENTITY,
     MCP_READ_ONLY, MCP_MAX_POOL_SIZE, EMBEDDING_PROVIDER,
     logger
@@ -74,7 +75,11 @@ class MariaDBServer:
             return
 
         try:
-            logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
+            if DB_CHARSET:
+                pool_params["charset"] = DB_CHARSET
+                logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE}, charset: {DB_CHARSET})")
+            else:
+                logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
             
             if DB_SSL:
                 ssl_context = ssl.create_default_context()
@@ -105,21 +110,22 @@ class MariaDBServer:
 
                 logger.info("SSL enabled for database connection")
             else:
-                ssl_context = None
                 logger.info("SSL disabled for database connection")
 
-            self.pool = await asyncmy.create_pool(
-                host=DB_HOST,
-                port=DB_PORT,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                db=DB_NAME,
-                minsize=1,
-                maxsize=MCP_MAX_POOL_SIZE,
-                autocommit=self.autocommit,
-                pool_recycle=3600,
-                ssl=ssl_context
-            )
+            pool_params = {
+                "host": DB_HOST,
+                "port": DB_PORT,
+                "user": DB_USER,
+                "password": DB_PASSWORD,
+                "db": DB_NAME,
+                "minsize": 1,
+                "maxsize": MCP_MAX_POOL_SIZE,
+                "autocommit": self.autocommit,
+                "pool_recycle": 3600,
+                "ssl_context"=ssl_context,
+            }
+            
+            self.pool = await asyncmy.create_pool(**pool_params)
             logger.info("Connection pool initialized successfully.")
         except AsyncMyError as e:
             logger.error(f"Failed to initialize database connection pool: {e}", exc_info=True)
@@ -150,7 +156,15 @@ class MariaDBServer:
             raise RuntimeError("Database connection pool not available.")
 
         allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
-        query_upper = sql.strip().upper()
+        
+        # Strip SQL comments from query
+        # Remove single-line comments (-- comment)
+        sql_no_comments = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
+        # Remove multi-line comments (/* comment */)
+        sql_no_comments = re.sub(r'/\*.*?\*/', '', sql_no_comments, flags=re.DOTALL)
+        sql_no_comments = sql_no_comments.strip()
+        
+        query_upper = sql_no_comments.upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
 
         if self.is_read_only and not is_allowed_read_query:
