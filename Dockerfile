@@ -1,24 +1,31 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS builder
 
-# Install system dependencies  
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*    
+# Install build dependencies and curl for uv installer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install uv
-RUN pip install --no-cache-dir uv
+RUN curl -fsSL https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 
-# Set working directory
 WORKDIR /app
 
 # Copy project files
-COPY . /app
+COPY . .
 
-# Install project dependencies
-RUN uv sync
+# Install project dependencies into a local venv
+RUN uv sync --no-dev
+
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PATH="/app/.venv/bin:${PATH}"
+
+# Copy venv and app from builder
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
 
 EXPOSE 9001
 
-CMD ["uv", "run", "src/server.py", "--host", "0.0.0.0", "--transport", "sse"]
+CMD ["python", "src/server.py", "--host", "0.0.0.0", "--transport", "sse"]
