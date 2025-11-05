@@ -338,6 +338,43 @@ export FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET="GOCSPX-..."
 }
 ```
 
+### Option 4: Docker container
+
+```json
+{
+  "servers": {
+    "mariadb-mcp-server": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-p",
+        "9001:9001",
+        "-e",
+        "DB_HOST=",
+        "-e",
+        "DB_PORT=",
+        "-e",
+        "DB_USER=",
+        "-e",
+        "DB_PASSWORD=",
+        "-e",
+        "DB_NAME=",
+        "mariadb-mcp-server",
+        "python",
+        "src/server.py",
+        "--host",
+        "0.0.0.0",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}
+
+```
+
 ---
 
 ## Logging
