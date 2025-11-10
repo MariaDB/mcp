@@ -3,6 +3,7 @@
 # Import configuration settings
 from config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
+    DB_SSL, DB_SSL_CA, DB_SSL_CERT, DB_SSL_KEY, DB_SSL_VERIFY_CERT, DB_SSL_VERIFY_IDENTITY,
     MCP_READ_ONLY, MCP_MAX_POOL_SIZE, EMBEDDING_PROVIDER,
     ALLOWED_ORIGINS, ALLOWED_HOSTS,
     logger
@@ -12,7 +13,9 @@ import asyncio
 import argparse
 import re
 from typing import List, Dict, Any, Optional
-from functools import partial 
+from functools import partial
+import os
+import ssl
 
 import asyncmy
 import anyio 
@@ -77,6 +80,41 @@ class MariaDBServer:
             return
 
         try:
+            ssl_context = None
+            if DB_SSL:
+                ssl_context = ssl.create_default_context()
+                if DB_SSL_CA:
+                    ca_path = os.path.expanduser(DB_SSL_CA)
+                    if os.path.exists(ca_path):
+                        ssl_context.load_verify_locations(cafile=ca_path)
+                        logger.info(f"Loaded SSL CA certificate: {ca_path}")
+                    else:
+                        logger.warning(f"SSL CA certificate file not found: {ca_path}")
+
+                if DB_SSL_CERT and DB_SSL_KEY:
+                    cert_path = os.path.expanduser(DB_SSL_CERT)
+                    key_path = os.path.expanduser(DB_SSL_KEY)
+                    if os.path.exists(cert_path) and os.path.exists(key_path):
+                        ssl_context.load_cert_chain(cert_path, key_path)
+                        logger.info(f"Loaded SSL client certificate: {cert_path}")
+                    else:
+                        logger.warning(f"SSL client certificate files not found: cert={cert_path}, key={key_path}")
+
+                if not DB_SSL_VERIFY_CERT:
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                    logger.info("SSL certificate verification disabled")
+                elif not DB_SSL_VERIFY_IDENTITY:
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_REQUIRED
+                    logger.info("SSL hostname verification disabled, certificate verification enabled")
+                else:
+                    logger.info("Full SSL verification enabled")
+
+                logger.info("SSL enabled for database connection")
+            else:
+                logger.info("SSL disabled for database connection")
+
             pool_params = {
                 "host": DB_HOST,
                 "port": DB_PORT,
@@ -88,13 +126,15 @@ class MariaDBServer:
                 "autocommit": self.autocommit,
                 "pool_recycle": 3600
             }
-            
+            if DB_SSL and ssl_context is not None:
+                pool_params["ssl"] = ssl_context
+
             if DB_CHARSET:
                 pool_params["charset"] = DB_CHARSET
                 logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE}, charset: {DB_CHARSET})")
             else:
                 logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
-            
+
             self.pool = await asyncmy.create_pool(**pool_params)
             logger.info("Connection pool initialized successfully.")
         except AsyncMyError as e:
