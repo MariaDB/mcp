@@ -138,6 +138,12 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `DB_PASSWORD`          | MariaDB password                                       | Yes      |              |
 | `DB_NAME`              | Default database (optional; can be set per query)      | No       |              |
 | `DB_CHARSET`           | Character set for database connection (e.g., `cp1251`) | No       | MariaDB default |
+| `DB_SSL`               | Enable SSL/TLS for database connection (`true`/`false`) | No      | `false`      |
+| `DB_SSL_CA`            | Path to CA certificate file for SSL verification       | No       |              |
+| `DB_SSL_CERT`          | Path to client certificate file for SSL authentication | No       |              |
+| `DB_SSL_KEY`           | Path to client private key file for SSL authentication | No       |              |
+| `DB_SSL_VERIFY_CERT`   | Verify server certificate (`true`/`false`)             | No       | `true`       |
+| `DB_SSL_VERIFY_IDENTITY` | Verify server hostname identity (`true`/`false`)     | No       | `false`      |
 | `MCP_READ_ONLY`        | Enforce read-only SQL mode (`true`/`false`)            | No       | `true`       |
 | `MCP_MAX_POOL_SIZE`    | Max DB connection pool size                            | No       | `10`         |
 | `EMBEDDING_PROVIDER`   | Embedding provider (`openai`/`gemini`/`huggingface`)   | No     |`None`(Disabled)|
@@ -178,6 +184,33 @@ DB_NAME=your_default_database
 MCP_READ_ONLY=true
 MCP_MAX_POOL_SIZE=10
 ```
+
+**With SSL/TLS Enabled:**
+```dotenv
+DB_HOST=your-remote-host.com
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_PORT=3306
+DB_NAME=your_default_database
+
+# Enable SSL
+DB_SSL=true
+DB_SSL_CA=~/.mysql/ca-cert.pem
+DB_SSL_CERT=~/.mysql/client-cert.pem
+DB_SSL_KEY=~/.mysql/client-key.pem
+DB_SSL_VERIFY_CERT=true
+DB_SSL_VERIFY_IDENTITY=false
+
+MCP_READ_ONLY=true
+MCP_MAX_POOL_SIZE=10
+```
+
+**Note on SSL Configuration:**
+- All SSL certificate paths support `~` for home directory expansion
+- `DB_SSL_CA` is used to verify the server's certificate
+- `DB_SSL_CERT` and `DB_SSL_KEY` are used for client certificate authentication (mutual TLS)
+- Set `DB_SSL_VERIFY_CERT=false` only for testing with self-signed certificates
+- Set `DB_SSL_VERIFY_IDENTITY=true` to enable strict hostname verification
 
 **Example Authentication Configuration:**
 This configuration uses external web authentication via GitHub or Google. If you have internal JWT authentication (desired for organizations who manage their own services), you can use the JWT provider instead.
