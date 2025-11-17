@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Copy project files
 COPY . .
-COPY build/env.tmpl /app/.env
+# COPY build/env.tmpl /app/.env
 # Install project dependencies into a local venv
 RUN uv sync --no-dev
 
@@ -25,9 +25,9 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # Copy venv and app from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
-COPY --from=builder /app/.env /app/.env
+
 
 EXPOSE 9001
 
 VOLUME [ "/var/log/bondlink" ]
-ENTRYPOINT ["uv", "run", "src/server.py", "--host", "0.0.0.0", "--port", "9001", "--transport", "http", "--env-file", "/app/.env"]
+ENTRYPOINT ["uv", "run", "src/server.py", "--host", "0.0.0.0", "--port", "9001", "--transport", "http"]
