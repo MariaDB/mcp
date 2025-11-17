@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.11-slim AS builder
+FROM ghcr.io/astral-sh/uv:debian-slim AS builder
 
 ENV PATH="/root/.local/bin:${PATH}"
 
@@ -11,7 +11,7 @@ COPY . .
 # Install project dependencies into a local venv
 
 
-FROM python:3.11-slim
+FROM ghcr.io/astral-sh/uv:debian-slim
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH"
