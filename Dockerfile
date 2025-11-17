@@ -1,27 +1,32 @@
-FROM ghcr.io/astral-sh/uv:debian-slim AS builder
+FROM python:3.11-slim AS builder
 
+# Install build dependencies and curl for uv installer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN curl -fsSL https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --locked
+
 # Copy project files
 COPY . .
-# COPY build/env.tmpl /app/.env
+
 # Install project dependencies into a local venv
+RUN uv sync --no-dev
 
-
-FROM ghcr.io/astral-sh/uv:debian-slim
+FROM python:3.11-slim
 
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH"
-ENV VIRTUAL_ENV="/app/.venv"
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # Copy venv and app from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app .
+COPY --from=builder /app/src /app/src
 
 EXPOSE 9001
 
 VOLUME [ "/var/log/bondlink" ]
-ENTRYPOINT ["uv", "run", "src/server.py", "--host", "0.0.0.0", "--port", "9001", "--transport", "http"]
+ENTRYPOINT ["python", "src/server.py", "--host", "0.0.0.0", "--port", "9001", "--transport", "http"]
