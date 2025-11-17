@@ -1,32 +1,25 @@
-FROM python:3.11-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.11-slim AS builder
 
-# Install build dependencies and curl for uv installer
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv
-ADD https://astral.sh/uv/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
 ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /app
-
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked
 # Copy project files
 COPY . .
 # COPY build/env.tmpl /app/.env
 # Install project dependencies into a local venv
-RUN uv sync --no-dev
+
 
 FROM python:3.11-slim
 
 WORKDIR /app
-ENV PATH="/app/.venv/bin:${PATH}"
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
 
 # Copy venv and app from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/src /app/src
-
+COPY --from=builder /app .
 
 EXPOSE 9001
 
