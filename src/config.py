@@ -8,6 +8,9 @@ from pathlib import Path
 # Load environment variables from .env file
 load_dotenv()
 
+# --- Authentication Configuration ---
+JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "mariadb_ops_server")
+JWT_ISSUER = os.getenv("JWT_ISSUER", "http://localhost")
 # --- Logging Configuration ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE_PATH = os.getenv("LOG_FILE", "logs/mcp_server.log")
