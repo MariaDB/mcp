@@ -27,11 +27,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from embeddings import EmbeddingService
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name) - %(levelname)s - %(message)s')
 
-def custom_log_handler(message):
-    """
-    A custom log handler that prints messages with a timestamp.
-    """
-    logging.debug(f"FastMCP Client Log: {message}")
+# def custom_log_handler(message):
+#     """
+#     A custom log handler that prints messages with a timestamp.
+#     """
+#     logging.debug(f"FastMCP Client Log: {message}")
 
 
 # Singleton instance for embedding service
@@ -54,7 +54,7 @@ class MariaDBServer:
     Manages the database connection pool.
     """
     def __init__(self, server_name="MariaDB_Server", autocommit=True):
-        self.mcp = FastMCP(server_name, auth=auth, custom_log_handler=custom_log_handler)
+        self.mcp = FastMCP(server_name, auth=auth)
         self.pool: Optional[asyncmy.Pool] = None
         self.autocommit = not MCP_READ_ONLY
         self.is_read_only = MCP_READ_ONLY
