@@ -8,7 +8,7 @@ from config import (
     logger
 )
 
-import asyncio
+import datetime
 import argparse
 import re
 import logging
@@ -25,14 +25,31 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import EmbeddingService for vector store creation
 from embeddings import EmbeddingService
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name) - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s'  # We'll format the message ourselves in the middleware
+)
+logger = logging.getLogger(__name__)
 
-# def custom_log_handler(message):
-#     """
-#     A custom log handler that prints messages with a timestamp.
-#     """
-#     logging.debug(f"FastMCP Client Log: {message}")
+class TimestampMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Capture start time
+        start_time = datetime.now()
+        timestamp = start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
+        # Log the incoming request
+        logger.info(f"[{timestamp}] → {request.method} {request.url.path}")
+
+        # Process the request
+        response = await call_next(request)
+
+        # Calculate duration
+        duration = (datetime.now() - start_time).total_seconds()
+
+        # Log the response
+        logger.info(f"[{timestamp}] ← {request.method} {request.url.path} - {response.status_code} ({duration:.3f}s)")
+
+        return response
 
 # Singleton instance for embedding service
 embedding_service = None
@@ -55,6 +72,7 @@ class MariaDBServer:
     """
     def __init__(self, server_name="MariaDB_Server", autocommit=True):
         self.mcp = FastMCP(server_name, auth=auth)
+        self.mcp.app.add_middleware(TimestampMiddleware)
         self.pool: Optional[asyncmy.Pool] = None
         self.autocommit = not MCP_READ_ONLY
         self.is_read_only = MCP_READ_ONLY
