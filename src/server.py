@@ -21,6 +21,7 @@ from fastmcp import FastMCP, Context
 
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import EmbeddingService for vector store creation
@@ -32,24 +33,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class TimestampMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        # Capture start time
-        start_time = datetime.now()
-        timestamp = start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+  async def dispatch(self, request, call_next):
+    # Capture start time
+    start_time = datetime.now()
+    timestamp = start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-        # Log the incoming request
-        logger.info(f"[{timestamp}] → {request.method} {request.url.path}")
+    # Log the incoming request
+    logger.info(f"[{timestamp}] → {request.method} {request.url.path}")
 
-        # Process the request
-        response = await call_next(request)
+    # Process the request
+    response = await call_next(request)
 
-        # Calculate duration
-        duration = (datetime.now() - start_time).total_seconds()
+    # Calculate duration
+    duration = (datetime.now() - start_time).total_seconds()
 
-        # Log the response
-        logger.info(f"[{timestamp}] ← {request.method} {request.url.path} - {response.status_code} ({duration:.3f}s)")
+    # Log the response
+    logger.info(f"[{timestamp}] ← {request.method} {request.url.path} - {response.status_code} ({duration:.3f}s)")
 
-        return response
+    return response
 
 # Singleton instance for embedding service
 embedding_service = None
