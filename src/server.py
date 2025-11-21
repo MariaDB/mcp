@@ -37,9 +37,9 @@ class TimestampMiddleware(BaseHTTPMiddleware):
     # Capture start time
     start_time = datetime.now()
     timestamp = start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-
+    body = await request.body()
     # Log the incoming request
-    logger.info(f"[{timestamp}] → {request.method} {request.url.path}")
+    logger.info(f"[{timestamp}] → {request.method} {request.url.path} Headers: {dict(request.headers)} Body: {body.decode('utf-8') if body else '{}'}")
 
     # Process the request
     response = await call_next(request)
