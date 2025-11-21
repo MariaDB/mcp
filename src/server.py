@@ -23,12 +23,13 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-
+from pythonjsonlogger import jsonlogger
+jsonFormatter = jsonlogger.JsonFormatter()
 # Import EmbeddingService for vector store creation
 from embeddings import EmbeddingService
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(message)s'  # We'll format the message ourselves in the middleware
+    level=logging.DEBUG,
+    format=jsonFormatter
 )
 logger = logging.getLogger(__name__)
 

@@ -5,6 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from uvicorn.config import LOGGING_CONFIG
+from pythonjsonlogger import jsonlogger
 # Load environment variables from .env file
 load_dotenv()
 
@@ -34,7 +35,8 @@ root_logger = logging.getLogger()
 root_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
 # Create formatter
-log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+log_formatter = jsonlogger.JsonFormatter()
+
 LOGGING_CONFIG["formatters"]["default"]["fmt"] = log_formatter._fmt
 # Remove existing handlers to avoid duplication if script is reloaded
 for handler in root_logger.handlers[:]:
