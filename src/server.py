@@ -33,26 +33,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TimestampMiddleware(BaseHTTPMiddleware):
-  async def dispatch(self, request, call_next):
-    # Capture start time
-    start_time = datetime.now()
-    timestamp = start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    body = await request.body()
-    # Log the incoming request
-    logger.info(f"[{timestamp}] → {request.method} {request.url.path} Headers: {dict(request.headers)} Body: {body.decode('utf-8') if body else '{}'}")
-
-    # Process the request
-    response = await call_next(request)
-
-    # Calculate duration
-    duration = (datetime.now() - start_time).total_seconds()
-
-    # Log the response
-    logger.info(f"[{timestamp}] ← {request.method} {request.url.path} - {response.status_code} ({duration:.3f}s)")
-
-    return response
-
 # Singleton instance for embedding service
 embedding_service = None
 if EMBEDDING_PROVIDER is not None:
@@ -73,8 +53,7 @@ class MariaDBServer:
     Manages the database connection pool.
     """
     def __init__(self, server_name="MariaDB_Server", autocommit=True):
-        self.mcp = FastMCP(server_name)
-        self.mcp.add_middleware(TimestampMiddleware)
+        self.mcp = FastMCP(server_name, stateless_http=True)
         self.pool: Optional[asyncmy.Pool] = None
         self.autocommit = not MCP_READ_ONLY
         self.is_read_only = MCP_READ_ONLY
