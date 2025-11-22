@@ -73,7 +73,7 @@ class MariaDBServer:
     Manages the database connection pool.
     """
     def __init__(self, server_name="MariaDB_Server", autocommit=True):
-        self.mcp = FastMCP(server_name, auth=auth)
+        self.mcp = FastMCP(server_name)
         self.mcp.add_middleware(TimestampMiddleware)
         self.pool: Optional[asyncmy.Pool] = None
         self.autocommit = not MCP_READ_ONLY
