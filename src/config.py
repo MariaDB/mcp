@@ -1,22 +1,23 @@
 # config.py
 import os
 from dotenv import load_dotenv
-import logging
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
-from uvicorn.config import LOGGING_CONFIG
-from pythonjsonlogger import jsonlogger
+
+# Import our dedicated logging configuration
+from logging_config import setup_logger, get_logger, setup_third_party_logging
+
 # Load environment variables from .env file
 load_dotenv()
 
 # --- Authentication Configuration ---
 JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "mariadb_ops_server")
 JWT_ISSUER = os.getenv("JWT_ISSUER", "http://localhost")
+
 # --- Logging Configuration ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE_PATH = os.getenv("LOG_FILE", "logs/mcp_server.log")
 LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", 10 * 1024 * 1024))
 LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", 5))
+THIRD_PARTY_LOG_LEVEL = os.getenv("THIRD_PARTY_LOG_LEVEL", "WARNING").upper()
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS")
 if ALLOWED_ORIGINS:
@@ -30,37 +31,18 @@ if ALLOWED_HOSTS:
 else:
     ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
-# Get the root logger
-root_logger = logging.getLogger()
-root_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
-
-# Create formatter
-log_formatter = jsonlogger.JsonFormatter()
-
-LOGGING_CONFIG["formatters"]["default"]["fmt"] = log_formatter._fmt
-# Remove existing handlers to avoid duplication if script is reloaded
-for handler in root_logger.handlers[:]:
-    root_logger.removeHandler(handler)
-
-# Console Handler
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_formatter)
-root_logger.addHandler(console_handler)
-
-# File Handler - Ensure log directory exists
-log_file = Path(LOG_FILE_PATH)
-log_file.parent.mkdir(parents=True, exist_ok=True)
-
-file_handler = RotatingFileHandler(
-    log_file,
-    maxBytes=LOG_MAX_BYTES,
-    backupCount=LOG_BACKUP_COUNT
+# Set up the dedicated logger for this project (NOT the root logger)
+logger = setup_logger(
+    log_level=LOG_LEVEL,
+    log_file_path=LOG_FILE_PATH,
+    log_max_bytes=LOG_MAX_BYTES,
+    log_backup_count=LOG_BACKUP_COUNT,
+    enable_console=True,
+    enable_file=True
 )
-file_handler.setFormatter(log_formatter)
-root_logger.addHandler(file_handler)
 
-# The specific logger used in server.py and elsewhere will inherit this configuration.
-logger = logging.getLogger(__name__)
+# Configure third-party library logging to reduce noise
+setup_third_party_logging(level=THIRD_PARTY_LOG_LEVEL)
 
 # --- Database Configuration ---
 DB_HOST = os.getenv("DB_HOST", "localhost")

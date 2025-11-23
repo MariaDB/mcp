@@ -1,18 +1,21 @@
-import logging
 import sys
 import os
 import asyncio
 from typing import List, Optional, Dict, Any, Union, Awaitable
 import numpy as np
 
-# Import configuration variables and the logger instance
+# Import configuration variables
 from config import (
     EMBEDDING_PROVIDER,
     OPENAI_API_KEY,
     GEMINI_API_KEY,
-    HF_MODEL,
-    logger
+    HF_MODEL
 )
+
+# Import the dedicated logger
+from logging_config import get_logger
+
+logger = get_logger("embeddings")
 
 # Import specific client libraries
 try:

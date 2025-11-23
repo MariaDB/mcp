@@ -11,7 +11,6 @@ from config import (
 import datetime
 import argparse
 import re
-import logging
 from typing import List, Dict, Any, Optional
 from functools import partial
 
@@ -23,15 +22,9 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from pythonjsonlogger import jsonlogger
-jsonFormatter = jsonlogger.JsonFormatter()
+
 # Import EmbeddingService for vector store creation
 from embeddings import EmbeddingService
-logging.basicConfig(
-    level=logging.DEBUG,
-    format=jsonFormatter
-)
-logger = logging.getLogger(__name__)
 
 # Singleton instance for embedding service
 embedding_service = None
