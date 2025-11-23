@@ -27,7 +27,5 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 
 EXPOSE 9001
-
-VOLUME [ "/var/log/bondlink" ]
 # TODO Move to a path
 ENTRYPOINT ["python", "src/server.py", "--host", "0.0.0.0", "--port", "9001", "--transport", "http", "--path", "/db-tools"]
