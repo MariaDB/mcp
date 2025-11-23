@@ -1,35 +1,25 @@
-name: mariadb-mcp
 services:
-  # mariadb-server:
-  #   image: mariadb:11
-  #   container_name: mariadb
-  #   environment:
-  #     MARIADB_ROOT_PASSWORD: rootpassword123
-  #     MARIADB_DATABASE: demo
-  #     MARIADB_USER: user
-  #     MARIADB_PASSWORD: password123
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-p'rootpassword123'"]
-  #     interval: 5s
-  #     timeout: 3s
-  #     retries: 10
+  mariadb-server:
+    image: mariadb:11
+    container_name: mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpassword123
+      MARIADB_DATABASE: demo
+      MARIADB_USER: user
+      MARIADB_PASSWORD: password123
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-p'rootpassword123'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   mariadb-mcp:
-    build:
-      dockerfile: Dockerfile
-      tags:
-        - jeffdyke/mariadb-mcp:latest
+    build: .
     container_name: mariadb-mcp
-    # env_file: .env
+    env_file: .env
     ports:
       - "9001:9001"
-    volumes:
-      - /var/log/bondlink:/app/logs
-    x-bake:
-      platforms:
-        - linux/amd64
-        # - linux/arm64
-    # depends_on:
-    #   mariadb-server:
-    #     condition: service_healthy
+    depends_on:
+      mariadb-server:
+        condition: service_healthy
