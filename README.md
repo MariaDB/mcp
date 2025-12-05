@@ -11,6 +11,7 @@ The MCP MariaDB Server provides a Model Context Protocol (MCP) interface for man
 - [Available Tools](#available-tools)
 - [Embeddings & Vector Store](#embeddings--vector-store)
 - [Configuration & Environment Variables](#configuration--environment-variables)
+- [Security Considerations](#security-considerations)
 - [Installation & Setup](#installation--setup)
 - [Usage Examples](#usage-examples)
 - [Integration - Claude desktop/Cursor/Windsurf](#integration---claude-desktopcursorwindsurf)
@@ -227,6 +228,11 @@ export FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID="123456.apps.googleusercontent.com"
 export FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET="GOCSPX-..."
 ```
 
+### Database User Privileges - **IMPORTANT**
+
+**⚠️ The only way to guarantee 100% read-only access with absolute certainty is to configure the MariaDB user with appropriate privileges.** The READ_ONLY flag is a best effort attempt to prevent write operations, but it is based upon a whitelist of allowed queries and against a truly adversarial user it is not a substitute for proper database user privileges.
+
+For production use, you should create a dedicated database user with minimal privileges. This is also recommended to show the LLM only the data it may need to perform its task even outside of read-only mode.
 ---
 
 ## Installation & Setup

@@ -183,6 +183,22 @@ class MariaDBServer:
         if self.is_read_only and not is_allowed_read_query:
              logger.warning(f"Blocked potentially non-read-only query in read-only mode: {sql[:100]}...")
              raise PermissionError("Operation forbidden: Server is in read-only mode.")
+        if self.is_read_only:
+            # Remove string literals to avoid matching patterns inside strings
+            # Handle both single and double quoted strings
+            sql_no_strings = re.sub(r"'(?:[^'\\]|\\.)*'", "''", sql_no_comments)
+            sql_no_strings = re.sub(r'"(?:[^"\\]|\\.)*"', '""', sql_no_strings)
+            sql_no_strings_upper = sql_no_strings.upper()
+            
+            # Check for LOAD_FILE() function (case-insensitive, outside strings)
+            if re.search(r'\bLOAD_FILE\s*\(', sql_no_strings_upper):
+                logger.warning(f"Blocked query containing LOAD_FILE(): {sql[:100]}...")
+                raise PermissionError("Operation forbidden: LOAD_FILE() is not allowed for security reasons.")
+            
+            # Check for SELECT ... INTO OUTFILE/DUMPFILE (case-insensitive, outside strings)
+            if re.search(r'\bINTO\s+(OUTFILE|DUMPFILE)\b', sql_no_strings_upper):
+                logger.warning(f"Blocked query containing SELECT INTO OUTFILE or DUMPFILE: {sql[:100]}...")
+                raise PermissionError("Operation forbidden: SELECT INTO OUTFILE and SELECT INTO DUMPFILE are not allowed for security reasons.")
 
         logger.info(f"Executing query (DB: {database or DB_NAME}): {sql[:100]}...")
         if params:
@@ -448,7 +464,7 @@ class MariaDBServer:
 
     async def execute_sql(self, sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
         """
-        Executes a read-only SQL query (primarily SELECT, SHOW, DESCRIBE) against a specified database
+        Executes a SQL query (primarily SELECT, SHOW, DESCRIBE) against a specified database
         and returns the results. Uses parameterized queries for safety.
         Example `parameters`: ["value1", 123] corresponding to %s placeholders in `sql_query`.
         """
