@@ -25,7 +25,7 @@ The MCP MariaDB Server exposes a set of tools for interacting with MariaDB datab
 - Retrieving table schemas
 - Executing safe, read-only SQL queries
 - Creating and managing vector stores for embedding-based search
-- Integrating with embedding providers (currently OpenAI, Gemini, and HuggingFace) (optional)
+- Integrating with embedding providers (currently OpenAI, Gemini, HuggingFace and Ollama) (optional)
 
 ---
 
@@ -104,13 +104,18 @@ The MCP MariaDB Server provides **optional** embedding and vector store capabili
 - **OpenAI**
 - **Gemini**
 - **Open models from Huggingface**
+- **Open models from Ollama**
 
 ### Configuration
 
-- `EMBEDDING_PROVIDER`: Set to `openai`, `gemini`, `huggingface`, or leave unset to disable
+- `EMBEDDING_PROVIDER`: Set to `openai`, `gemini`, `huggingface`, `ollama` or leave unset to disable
 - `OPENAI_API_KEY`: Required if using OpenAI embeddings
 - `GEMINI_API_KEY`: Required if using Gemini embeddings
 - `HF_MODEL`: Required if using HuggingFace embeddings (e.g., "intfloat/multilingual-e5-large-instruct" or "BAAI/bge-m3")
+- `OLLAMA_HOST`: Required if using Ollama embeddings
+- `OLLAMA_PORT`: Required if using Ollama embeddings
+- `OLLAMA_MODEL`: Required if using Ollama embeddings
+
 ### Model Selection
 
 - Default and allowed models are configurable in code (`DEFAULT_OPENAI_MODEL`, `ALLOWED_OPENAI_MODELS`)
@@ -150,6 +155,9 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `OPENAI_API_KEY`       | API key for OpenAI embeddings                          | Yes (if EMBEDDING_PROVIDER=openai) | |
 | `GEMINI_API_KEY`       | API key for Gemini embeddings                          | Yes (if EMBEDDING_PROVIDER=gemini) | |
 | `HF_MODEL`             | Open models from Huggingface                           | Yes (if EMBEDDING_PROVIDER=huggingface) | |
+| `OLLAMA_HOST`          | Ollama host address                                    | Yes (if EMBEDDING_PROVIDER=ollama) | `localhost` |
+| `OLLAMA_PORT`          | Ollama port                                            | Yes (if EMBEDDING_PROVIDER=ollama) | `11434` |
+| `OLLAMA_MODEL`         | Open models from Ollama                                | Yes (if EMBEDDING_PROVIDER=ollama) | |
 | `ALLOWED_ORIGINS`      | Comma-separated list of allowed origins                | No       | Long list of allowed origins corresponding to local use of the server |
 | `ALLOWED_HOSTS`        | Comma-separated list of allowed hosts                  | No       | `localhost,127.0.0.1` |
 
@@ -172,6 +180,9 @@ EMBEDDING_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AI...
 HF_MODEL="BAAI/bge-m3"
+OLLAMA_HOST=localhost
+OLLAMA_PORT=11434
+OLLAMA_MODEL="nomic-embed-text"
 ```
 
 **Without Embedding Support:**
