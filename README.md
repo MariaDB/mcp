@@ -200,7 +200,7 @@ export FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET="GOCSPX-..."
 
 ### Requirements
 
-- **Python 3.11** (see `.python-version`)
+- **Python 3.13+** (see `.python-version`)
 - **uv** (dependency manager; [install instructions](https://github.com/astral-sh/uv))
 - MariaDB server (local or remote)
 
