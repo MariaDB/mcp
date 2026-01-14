@@ -9,7 +9,7 @@ MariaDB MCP Server - A Model Context Protocol (MCP) server providing an interfac
 ## Development Commands
 
 ```bash
-# Setup
+# Setup (requires Python 3.13+)
 pip install uv && uv sync
 
 # Run server (stdio - default for MCP clients)
@@ -31,9 +31,9 @@ docker compose up --build
 
 ### Core Components
 
-- **`src/server.py`**: `MariaDBServer` class using FastMCP. Contains all MCP tool definitions, connection pool management, and query execution. Entry point.
+- **`src/server.py`**: `MariaDBServer` class using FastMCP. Contains all MCP tool definitions, connection pool management, and query execution. Entry point via `anyio.run()`.
 
-- **`src/config.py`**: Loads environment/.env configuration. Sets up logging (console + rotating file at `logs/mcp_server.log`). Validates credentials and embedding provider.
+- **`src/config.py`**: Loads environment/.env configuration. Sets up logging (console + rotating file at `logs/mcp_server.log`). Validates credentials and embedding provider at import time.
 
 - **`src/embeddings.py`**: `EmbeddingService` class supporting OpenAI, Gemini, and HuggingFace providers. Model dimension lookup is async-capable.
 
@@ -43,11 +43,13 @@ docker compose up --build
    - `DB_HOSTS`, `DB_PORTS`, `DB_USERS`, `DB_PASSWORDS`, `DB_NAMES`, `DB_CHARSETS`
    - First connection becomes default pool; others stored in `self.pools` dict keyed by `host:port`
 
-2. **Read-Only Mode**: `MCP_READ_ONLY=true` (default) allows only SELECT/SHOW/DESCRIBE/USE. SQL comments are stripped via regex before checking query prefix.
+2. **Read-Only Mode**: `MCP_READ_ONLY=true` (default) allows only SELECT/SHOW/DESCRIBE/USE. SQL comments are stripped via regex in `_execute_query()` before checking query prefix.
 
-3. **Conditional Tool Registration**: Vector store tools only registered when `EMBEDDING_PROVIDER` is set. Check at `register_tools()` in server.py:879.
+3. **Conditional Tool Registration**: Vector store tools only registered when `EMBEDDING_PROVIDER` is set. Check at `register_tools()` in server.py:879 (`if EMBEDDING_PROVIDER is not None`).
 
 4. **Async Architecture**: `anyio.run()` at entry point. All DB operations and tool handlers are async. Gemini embeddings use `asyncio.to_thread()` since SDK lacks async.
+
+5. **Singleton EmbeddingService**: Created once at module load (`embedding_service = EmbeddingService()`) when provider is configured.
 
 ### MCP Tools
 
@@ -70,11 +72,12 @@ docker compose up --build
 ## Code Quality Rules
 
 - **CRITICAL:** Always use parameterized queries (`%s` placeholders) - never concatenate SQL strings
-- **CRITICAL:** Validate database/table names with `isidentifier()` before use
+- **CRITICAL:** Validate database/table names with `isidentifier()` before use in SQL
 - All database operations must be `async` with `await`
 - Log tool calls: `logger.info(f"TOOL START: ...")` / `logger.info(f"TOOL END: ...")`
 - Catch `AsyncMyError` for database errors, `PermissionError` for read-only violations
 - Vector store tests require `EMBEDDING_PROVIDER` configured
+- Use backtick quoting for identifiers in SQL: `` `database_name`.`table_name` ``
 
 ## Custom Commands
 
