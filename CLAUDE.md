@@ -6,10 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MariaDB MCP Server - A Model Context Protocol (MCP) server providing an interface for AI assistants to interact with MariaDB databases. Supports standard SQL operations and optional vector/embedding-based semantic search.
 
+**Requirements:** Python 3.13+, MariaDB 11.7+ (for vector store features with `UUID_v7()`)
+
 ## Development Commands
 
 ```bash
-# Setup (requires Python 3.13+, uses uv package manager)
+# Setup (uses uv package manager)
 pip install uv && uv sync
 
 # Run server (stdio - default for MCP clients)
@@ -43,7 +45,7 @@ docker compose up --build
    - `DB_HOSTS`, `DB_PORTS`, `DB_USERS`, `DB_PASSWORDS`, `DB_NAMES`, `DB_CHARSETS`
    - First connection becomes default pool; others stored in `self.pools` dict keyed by `host:port`
 
-2. **Read-Only Mode**: `MCP_READ_ONLY=true` (default) allows only SELECT/SHOW/DESCRIBE/USE. SQL comments are stripped via regex in `_execute_query()` (lines 190-194) before checking query prefix.
+2. **Read-Only Mode**: `MCP_READ_ONLY=true` (default) allows only SELECT/SHOW/DESCRIBE/USE. SQL comments are stripped via regex in `_execute_query()` (lines 189-194) before checking query prefix.
 
 3. **Conditional Tool Registration**: Vector store tools only registered when `EMBEDDING_PROVIDER` is set. Check at `register_tools()` in server.py:879 (`if EMBEDDING_PROVIDER is not None`).
 
@@ -60,6 +62,7 @@ docker compose up --build
 ### Vector Store Table Schema
 
 ```sql
+-- Requires MariaDB 11.7+ for UUID_v7() and VECTOR type
 CREATE TABLE vector_store_name (
     id VARCHAR(36) NOT NULL DEFAULT UUID_v7() PRIMARY KEY,
     document TEXT NOT NULL,
@@ -80,6 +83,8 @@ CREATE TABLE vector_store_name (
 **Security:** `ALLOWED_ORIGINS`, `ALLOWED_HOSTS` (for HTTP/SSE transports)
 
 **Embeddings:** `EMBEDDING_PROVIDER` (openai|gemini|huggingface), plus provider-specific key (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `HF_MODEL`)
+
+**Logging:** `LOG_LEVEL` (INFO), `LOG_FILE` (logs/mcp_server.log), `LOG_MAX_BYTES` (10MB), `LOG_BACKUP_COUNT` (5)
 
 ## Code Quality Rules
 
