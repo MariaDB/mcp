@@ -3,7 +3,7 @@ name = "mariadb-server"
 version = "0.2.2"
 description = "MariaDB MCP Server"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "asyncmy>=0.2.10",
     "fastmcp[websockets]==2.12.1",
