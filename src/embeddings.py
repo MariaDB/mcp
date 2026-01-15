@@ -121,15 +121,19 @@ class EmbeddingService:
                 raise ValueError("HuggingFace model (HF_MODEL) is required in config for the HuggingFace provider.")
             try:
                 from sentence_transformers import SentenceTransformer
-                
+
                 # The primary model for this service instance will be HF_MODEL from config
-                self.default_model = HF_MODEL 
+                self.default_model = HF_MODEL
                 self.allowed_models = ALLOWED_HF_MODELS # These are other models that can be specified via embed()
-                
+
+                # Model cache for dynamically loaded HuggingFace models
+                self._hf_model_cache: Dict[str, Any] = {}
+
                 # Pre-load the default model from config
                 logger.info(f"Initializing SentenceTransformer with configured HF_MODEL: {self.default_model}")
-                self.huggingface_client = SentenceTransformer(self.default_model) 
-                # self.huggingface_client now holds the loaded model instance for config.HF_MODEL
+                self.huggingface_client = SentenceTransformer(self.default_model)
+                # Cache the default model as well
+                self._hf_model_cache[self.default_model] = self.huggingface_client
 
                 logger.info(f"HuggingFace provider initialized. Default model (from config.HF_MODEL): '{self.default_model}'. Client loaded. Allowed models for override: {self.allowed_models}")
 
@@ -308,23 +312,27 @@ class EmbeddingService:
                     raise RuntimeError("HuggingFace client (SentenceTransformer) not initialized. Check service setup.")
 
                 # target_model is already determined: model_name if valid, else self.default_model (which is config.HF_MODEL)
-                
+
                 embeddings_np: np.ndarray
                 effective_model_name = target_model
 
-                if target_model == self.default_model:
-                    logger.debug(f"Using pre-loaded HuggingFace model '{self.default_model}' for embedding.")
-                    embeddings_np = self.huggingface_client.encode(texts)
+                # Check cache first for the requested model
+                if target_model in self._hf_model_cache:
+                    logger.debug(f"Using cached HuggingFace model '{target_model}' for embedding.")
+                    model_instance = self._hf_model_cache[target_model]
+                    embeddings_np = model_instance.encode(texts)
                 else:
                     # A different model was requested via model_name, and it's valid (already checked in pre-amble of embed)
-                    logger.info(f"Dynamically loading HuggingFace model '{target_model}' for this embed call (different from pre-loaded '{self.default_model}').")
+                    logger.info(f"Loading and caching HuggingFace model '{target_model}' (different from default '{self.default_model}').")
                     try:
-                        # Ensure sentence_transformers is available for dynamic loading too
-                        from sentence_transformers import SentenceTransformer 
-                        dynamic_model_loader = SentenceTransformer(target_model)
-                        embeddings_np = dynamic_model_loader.encode(texts)
+                        from sentence_transformers import SentenceTransformer
+                        model_instance = SentenceTransformer(target_model)
+                        # Cache the loaded model for future use
+                        self._hf_model_cache[target_model] = model_instance
+                        embeddings_np = model_instance.encode(texts)
+                        logger.info(f"HuggingFace model '{target_model}' loaded and cached successfully.")
                     except Exception as e:
-                        logger.error(f"Failed to load or use dynamically specified HuggingFace model '{target_model}': {e}", exc_info=True)
+                        logger.error(f"Failed to load HuggingFace model '{target_model}': {e}", exc_info=True)
                         raise RuntimeError(f"Error with HuggingFace model '{target_model}': {e}")
             
                 # Convert numpy array to list of lists of floats (or list of floats)

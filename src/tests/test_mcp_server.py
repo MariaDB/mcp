@@ -9,9 +9,12 @@ import json
 # It tests the server's tools using the FastMCP client
 
 class TestMariaDBMCPTools(unittest.IsolatedAsyncioTestCase):
+    # Test database name used for cleanup
+    TEST_DB_NAME = "test_database"
+
     async def asyncSetUp(self):
         # Start the MariaDBServer in the background using stdio transport
-        self.server = MariaDBServer(autocommit=False)
+        self.server = MariaDBServer()
     
     async def task_group_helper(self, tg):
         # Start the server as a background task
@@ -218,11 +221,11 @@ class TestMariaDBMCPTools(unittest.IsolatedAsyncioTestCase):
                 await self.client.call_tool('create_database', {'database_name': 'test_database'})
                 await self.client.call_tool('create_vector_store', {'database_name': 'test_database', 'vector_store_name': 'test_vector_store'})
                 await self.client.call_tool('insert_docs_vector_store', {'database_name': 'test_database', 'vector_store_name': 'test_vector_store', 'documents': ['test_document'], 'metadata': [{'test': 'test'}]})
-                result = await self.client.call_tool('search_vector_store', {'database_name': 'test_database', 'vector_store_name': 'test_vector_store', 'query': 'test_query'})
+                result = await self.client.call_tool('search_vector_store', {'database_name': 'test_database', 'vector_store_name': 'test_vector_store', 'user_query': 'test_query'})
                 result = result[0].text
                 result = json.loads(result)
-                self.assertIsInstance(result, dict)
-                self.assertTrue(result['status'] == 'success')
+                self.assertIsInstance(result, list)
+                self.assertGreater(len(result), 0)
             tg.cancel_scope.cancel()
     
     async def test_readonly_mode(self):

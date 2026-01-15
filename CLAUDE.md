@@ -78,13 +78,23 @@ CREATE TABLE vector_store_name (
 
 **Database:** `DB_HOST` (localhost), `DB_PORT` (3306), `DB_NAME`, `DB_CHARSET`
 
-**MCP:** `MCP_READ_ONLY` (true), `MCP_MAX_POOL_SIZE` (10)
+**Timeouts:** `DB_CONNECT_TIMEOUT` (10s), `DB_READ_TIMEOUT` (30s), `DB_WRITE_TIMEOUT` (30s)
+
+**MCP:** `MCP_READ_ONLY` (true), `MCP_MAX_POOL_SIZE` (10), `MCP_MAX_RESULTS` (10000)
 
 **Security:** `ALLOWED_ORIGINS`, `ALLOWED_HOSTS` (for HTTP/SSE transports)
 
-**Embeddings:** `EMBEDDING_PROVIDER` (openai|gemini|huggingface), plus provider-specific key (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `HF_MODEL`)
+**Embeddings:** `EMBEDDING_PROVIDER` (openai|gemini|huggingface), `EMBEDDING_MAX_CONCURRENT` (5), plus provider-specific key (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `HF_MODEL`)
 
 **Logging:** `LOG_LEVEL` (INFO), `LOG_FILE` (logs/mcp_server.log), `LOG_MAX_BYTES` (10MB), `LOG_BACKUP_COUNT` (5)
+
+## Health Check & Metrics
+
+HTTP/SSE transports expose `/health` endpoint returning:
+- `status`: "healthy" or "unhealthy"
+- `uptime_seconds`: Server uptime
+- `pool_status`: "connected" or "disconnected"
+- `metrics`: Query counts, error rates, average query time, embedding counts
 
 ## Code Quality Rules
 

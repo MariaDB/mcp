@@ -3,24 +3,31 @@
 # Import configuration settings
 from config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
+    DB_HOSTS, DB_PORTS, DB_USERS, DB_PASSWORDS, DB_NAMES, DB_CHARSETS,
     MCP_READ_ONLY, MCP_MAX_POOL_SIZE, EMBEDDING_PROVIDER,
     ALLOWED_ORIGINS, ALLOWED_HOSTS,
+    DB_CONNECT_TIMEOUT, DB_READ_TIMEOUT, DB_WRITE_TIMEOUT,
+    EMBEDDING_MAX_CONCURRENT, MCP_MAX_RESULTS,
     logger
 )
 
 import asyncio
 import argparse
+import json
 import re
+import time
 from typing import List, Dict, Any, Optional
-from functools import partial 
+from functools import partial
 
 import asyncmy
-import anyio 
+import anyio
 from fastmcp import FastMCP, Context
 
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 # Import EmbeddingService for vector store creation
 from embeddings import EmbeddingService
@@ -32,17 +39,31 @@ if EMBEDDING_PROVIDER is not None:
 
 from asyncmy.errors import Error as AsyncMyError
 
+# Semaphore for rate limiting embedding API calls
+_embedding_semaphore: Optional[asyncio.Semaphore] = None
+
 # --- MariaDB MCP Server Class ---
 class MariaDBServer:
     """
     MCP Server exposing tools to interact with a MariaDB database.
     Manages the database connection pool.
     """
-    def __init__(self, server_name="MariaDB_Server", autocommit=True):
+    def __init__(self, server_name="MariaDB_Server"):
         self.mcp = FastMCP(server_name)
         self.pool: Optional[asyncmy.Pool] = None
+        self.pools: Dict[str, asyncmy.Pool] = {}  # Multiple pools by connection name
         self.autocommit = not MCP_READ_ONLY
         self.is_read_only = MCP_READ_ONLY
+        self._current_db_cache: Dict[int, str] = {}  # Cache database context per connection
+        # Metrics tracking
+        self._metrics = {
+            "queries_executed": 0,
+            "query_errors": 0,
+            "total_query_time_ms": 0,
+            "embeddings_generated": 0,
+            "pool_acquisitions": 0,
+        }
+        self._start_time = time.time()
         logger.info(f"Initializing {server_name}...")
         if self.is_read_only:
             logger.warning("Server running in READ-ONLY mode. Write operations are disabled.")
@@ -68,9 +89,21 @@ class MariaDBServer:
 
     async def initialize_pool(self):
         """Initializes the asyncmy connection pool within the running event loop."""
+        global _embedding_semaphore
+
+        # Initialize embedding semaphore for rate limiting
+        if EMBEDDING_PROVIDER is not None and _embedding_semaphore is None:
+            _embedding_semaphore = asyncio.Semaphore(EMBEDDING_MAX_CONCURRENT)
+            logger.info(f"Embedding rate limiter initialized (max concurrent: {EMBEDDING_MAX_CONCURRENT})")
+
+        # Initialize multiple pools if configured
+        if len(DB_HOSTS) > 1:
+            await self.initialize_multiple_pools()
+            return
+
         if not all([DB_USER, DB_PASSWORD]):
-             logger.error("Cannot initialize pool due to missing database credentials.")
-             raise ConnectionError("Missing database credentials for pool initialization.")
+            logger.error("Cannot initialize pool due to missing database credentials.")
+            raise ConnectionError("Missing database credentials for pool initialization.")
 
         if self.pool is not None:
             logger.info("Connection pool already initialized.")
@@ -86,17 +119,23 @@ class MariaDBServer:
                 "minsize": 1,
                 "maxsize": MCP_MAX_POOL_SIZE,
                 "autocommit": self.autocommit,
-                "pool_recycle": 3600
+                "pool_recycle": 3600,
+                "connect_timeout": DB_CONNECT_TIMEOUT,
+                "read_timeout": DB_READ_TIMEOUT,
+                "write_timeout": DB_WRITE_TIMEOUT,
             }
-            
+
             if DB_CHARSET:
                 pool_params["charset"] = DB_CHARSET
                 logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE}, charset: {DB_CHARSET})")
             else:
                 logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
-            
+
             self.pool = await asyncmy.create_pool(**pool_params)
-            logger.info("Connection pool initialized successfully.")
+
+            # Pool warmup - verify connection works
+            await self._warmup_pool()
+            logger.info("Connection pool initialized and validated successfully.")
         except AsyncMyError as e:
             logger.error(f"Failed to initialize database connection pool: {e}", exc_info=True)
             self.pool = None
@@ -106,8 +145,84 @@ class MariaDBServer:
             self.pool = None
             raise
 
+    async def _warmup_pool(self):
+        """Validates the connection pool by executing a simple query."""
+        if self.pool is None:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("SELECT 1")
+                    await cursor.fetchone()
+            logger.debug("Pool warmup successful - connection validated.")
+        except Exception as e:
+            logger.warning(f"Pool warmup query failed: {e}")
+    
+    async def initialize_multiple_pools(self):
+        """Initialize multiple database connection pools."""
+        global _embedding_semaphore
+
+        # Initialize embedding semaphore for rate limiting
+        if EMBEDDING_PROVIDER is not None and _embedding_semaphore is None:
+            _embedding_semaphore = asyncio.Semaphore(EMBEDDING_MAX_CONCURRENT)
+            logger.info(f"Embedding rate limiter initialized (max concurrent: {EMBEDDING_MAX_CONCURRENT})")
+
+        logger.info(f"Initializing {len(DB_HOSTS)} database connection pools...")
+
+        for i, host in enumerate(DB_HOSTS):
+            port = DB_PORTS[i] if i < len(DB_PORTS) else 3306
+            user = DB_USERS[i] if i < len(DB_USERS) else None
+            password = DB_PASSWORDS[i] if i < len(DB_PASSWORDS) else None
+            db_name = DB_NAMES[i] if i < len(DB_NAMES) else None
+            charset = DB_CHARSETS[i] if i < len(DB_CHARSETS) and DB_CHARSETS[i] else None
+
+            if not all([user, password]):
+                logger.warning(f"Skipping pool {i}: missing credentials for {host}")
+                continue
+
+            conn_name = f"{host}:{port}"
+            try:
+                pool_params = {
+                    "host": host,
+                    "port": port,
+                    "user": user,
+                    "password": password,
+                    "db": db_name,
+                    "minsize": 1,
+                    "maxsize": MCP_MAX_POOL_SIZE,
+                    "autocommit": self.autocommit,
+                    "pool_recycle": 3600,
+                    "connect_timeout": DB_CONNECT_TIMEOUT,
+                    "read_timeout": DB_READ_TIMEOUT,
+                    "write_timeout": DB_WRITE_TIMEOUT,
+                }
+                if charset:
+                    pool_params["charset"] = charset
+
+                self.pools[conn_name] = await asyncmy.create_pool(**pool_params)
+                logger.info(f"Pool '{conn_name}' initialized for {user}@{host}:{port}/{db_name}")
+
+                # Set first pool as default
+                if i == 0:
+                    self.pool = self.pools[conn_name]
+                    await self._warmup_pool()
+            except Exception as e:
+                logger.error(f"Failed to initialize pool for {conn_name}: {e}", exc_info=True)
+
     async def close_pool(self):
         """Closes the connection pool gracefully."""
+        # Close multiple pools
+        if self.pools:
+            logger.info(f"Closing {len(self.pools)} database connection pools...")
+            for conn_name, pool in self.pools.items():
+                try:
+                    pool.close()
+                    await pool.wait_closed()
+                    logger.info(f"Pool '{conn_name}' closed.")
+                except Exception as e:
+                    logger.error(f"Error closing pool '{conn_name}': {e}", exc_info=True)
+            self.pools.clear()
+        
         if self.pool:
             logger.info("Closing database connection pool...")
             try:
@@ -119,65 +234,83 @@ class MariaDBServer:
             finally:
                 self.pool = None
 
-    async def _execute_query(self, sql: str, params: Optional[tuple] = None, database: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Helper function to execute SELECT queries using the pool."""
+    async def _execute_query(self, sql: str, params: Optional[tuple] = None, database: Optional[str] = None, limit_results: bool = True) -> List[Dict[str, Any]]:
+        """Helper function to execute SELECT queries using the pool.
+
+        Args:
+            sql: The SQL query to execute
+            params: Optional tuple of parameters for parameterized queries
+            database: Optional database to switch to before executing
+            limit_results: If True, limits results to MCP_MAX_RESULTS (default True)
+
+        Returns:
+            List of result dictionaries
+
+        Raises:
+            RuntimeError: If pool not available or database error
+            PermissionError: If query blocked by read-only mode
+        """
         if self.pool is None:
             logger.error("Connection pool is not initialized.")
             raise RuntimeError("Database connection pool not available.")
 
         allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
-        
+
         # Strip SQL comments from query
         # Remove single-line comments (-- comment)
         sql_no_comments = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
         # Remove multi-line comments (/* comment */)
         sql_no_comments = re.sub(r'/\*.*?\*/', '', sql_no_comments, flags=re.DOTALL)
         sql_no_comments = sql_no_comments.strip()
-        
+
         query_upper = sql_no_comments.upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
 
         if self.is_read_only and not is_allowed_read_query:
-             logger.warning(f"Blocked potentially non-read-only query in read-only mode: {sql[:100]}...")
-             raise PermissionError("Operation forbidden: Server is in read-only mode.")
+            logger.warning(f"Blocked potentially non-read-only query in read-only mode: {sql[:100]}...")
+            raise PermissionError("Operation forbidden: Server is in read-only mode.")
 
         logger.info(f"Executing query (DB: {database or DB_NAME}): {sql[:100]}...")
         if params:
             logger.debug(f"Parameters: {params}")
 
         conn = None
+        start_time = time.time()
         try:
+            self._metrics["pool_acquisitions"] += 1
             async with self.pool.acquire() as conn:
                 async with conn.cursor(cursor=asyncmy.cursors.DictCursor) as cursor:
-                    current_db_query = "SELECT DATABASE()"
-                    await cursor.execute(current_db_query)
-                    current_db_result = await cursor.fetchone()
-                    current_db_name = current_db_result.get('DATABASE()') if current_db_result else None
-                    pool_db_name = DB_NAME
-                    actual_current_db = current_db_name or pool_db_name
-
-                    if database and database != actual_current_db:
-                        logger.info(f"Switching database context from '{actual_current_db}' to '{database}'")
+                    # Only switch database context if explicitly requested
+                    # This avoids unnecessary SELECT DATABASE() calls
+                    if database:
                         await cursor.execute(f"USE `{database}`")
 
                     await cursor.execute(sql, params or ())
                     results = await cursor.fetchall()
-                    logger.info(f"Query executed successfully, {len(results)} rows returned.")
+
+                    # Apply result limit for safety (prevent memory issues with large results)
+                    if limit_results and results and len(results) > MCP_MAX_RESULTS:
+                        logger.warning(f"Query returned {len(results)} rows, limiting to {MCP_MAX_RESULTS}")
+                        results = results[:MCP_MAX_RESULTS]
+
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    self._metrics["queries_executed"] += 1
+                    self._metrics["total_query_time_ms"] += elapsed_ms
+                    logger.info(f"Query executed successfully, {len(results)} rows returned in {elapsed_ms:.1f}ms.")
                     return results if results else []
         except AsyncMyError as e:
+            self._metrics["query_errors"] += 1
             conn_state = f"Connection: {'acquired' if conn else 'not acquired'}"
             logger.error(f"Database error executing query ({conn_state}): {e}", exc_info=True)
-            # Check for specific connection-related errors if possible
             raise RuntimeError(f"Database error: {e}") from e
         except PermissionError as e:
-             logger.warning(f"Permission denied: {e}")
-             raise e
+            logger.warning(f"Permission denied: {e}")
+            raise e
         except Exception as e:
-            # Catch potential loop closed errors here too, although ideally fixed by structure change
+            self._metrics["query_errors"] += 1
             if isinstance(e, RuntimeError) and 'Event loop is closed' in str(e):
-                 logger.critical("Detected closed event loop during query execution!", exc_info=True)
-                 # This indicates a fundamental problem with loop management still exists
-                 raise RuntimeError("Event loop closed unexpectedly during query.") from e
+                logger.critical("Detected closed event loop during query execution!", exc_info=True)
+                raise RuntimeError("Event loop closed unexpectedly during query.") from e
             conn_state = f"Connection: {'acquired' if conn else 'not acquired'}"
             logger.error(f"Unexpected error during query execution ({conn_state}): {e}", exc_info=True)
             raise RuntimeError(f"An unexpected error occurred: {e}") from e
@@ -684,13 +817,21 @@ class MariaDBServer:
                 "vector_store_name": vector_store_name
             }
             
-    async def insert_docs_vector_store(self, database_name: str, vector_store_name: str, documents: List[str], metadata: Optional[List[dict]] = None) -> dict:
+    async def insert_docs_vector_store(self, database_name: str, vector_store_name: str, documents: List[str], metadata: Optional[List[dict]] = None, batch_size: int = 100) -> dict:
         """
         Insert a batch of documents (with optional metadata) into a vector store.
         Documents must be a non-empty list of strings. Metadata, if provided, must be a list of dicts of the same length as documents.
         If metadata is not provided, an empty dict will be used for each document.
+
+        Args:
+            database_name: Target database
+            vector_store_name: Target vector store table
+            documents: List of document strings to insert
+            metadata: Optional list of metadata dicts (same length as documents)
+            batch_size: Number of documents to insert per batch (default 100)
         """
-        import json
+        logger.info(f"TOOL START: insert_docs_vector_store called for {database_name}.{vector_store_name} with {len(documents)} documents")
+
         if not database_name or not database_name.isidentifier():
             logger.error(f"Invalid database_name: '{database_name}'")
             raise ValueError(f"Invalid database_name: '{database_name}'")
@@ -700,46 +841,76 @@ class MariaDBServer:
         if not isinstance(documents, list) or not documents or not all(isinstance(doc, str) and doc for doc in documents):
             logger.error("'documents' must be a non-empty list of non-empty strings.")
             raise ValueError("'documents' must be a non-empty list of non-empty strings.")
+
         # Handle metadata: optional
         if metadata is None:
             metadata = [{} for _ in documents]
         if not isinstance(metadata, list) or len(metadata) != len(documents):
             logger.error("'metadata' must be a list of dicts, same length as documents (or omitted).")
             raise ValueError("'metadata' must be a list of dicts, same length as documents (or omitted).")
-        # Generate embeddings
-        embeddings = await embedding_service.embed(documents)
-        # Prepare metadata JSON
-        metadata_json = [json.dumps(m) for m in metadata]
-        # Prepare values for batch insert
-        insert_query = f"INSERT INTO `{database_name}`.`{vector_store_name}` (document, embedding, metadata) VALUES (%s, VEC_FromText(%s), %s)"
+
         inserted = 0
         errors = []
-        for doc, emb, meta in zip(documents, embeddings, metadata_json):
-            emb_str = json.dumps(emb)
+
+        # Process in batches for better performance
+        for batch_start in range(0, len(documents), batch_size):
+            batch_end = min(batch_start + batch_size, len(documents))
+            batch_docs = documents[batch_start:batch_end]
+            batch_meta = metadata[batch_start:batch_end]
+
             try:
-                await self._execute_query(insert_query, params=(doc, emb_str, meta), database=database_name)
-                inserted += 1
+                # Generate embeddings with rate limiting
+                if _embedding_semaphore:
+                    async with _embedding_semaphore:
+                        embeddings = await embedding_service.embed(batch_docs)
+                        self._metrics["embeddings_generated"] += len(batch_docs)
+                else:
+                    embeddings = await embedding_service.embed(batch_docs)
+                    self._metrics["embeddings_generated"] += len(batch_docs)
+
+                # Prepare metadata JSON
+                metadata_json = [json.dumps(m) for m in batch_meta]
+
+                # Build batch INSERT query for better performance
+                insert_query = f"INSERT INTO `{database_name}`.`{vector_store_name}` (document, embedding, metadata) VALUES (%s, VEC_FromText(%s), %s)"
+
+                # Insert each document (MariaDB doesn't support batch vector inserts well)
+                for doc, emb, meta in zip(batch_docs, embeddings, metadata_json):
+                    emb_str = json.dumps(emb)
+                    try:
+                        await self._execute_query(insert_query, params=(doc, emb_str, meta), database=database_name, limit_results=False)
+                        inserted += 1
+                    except Exception as e:
+                        logger.error(f"Failed to insert doc into {database_name}.{vector_store_name}: {e}")
+                        errors.append(str(e))
+
             except Exception as e:
-                logger.error(f"Failed to insert doc into {database_name}.{vector_store_name}: {e}", exc_info=True)
-                errors.append(str(e))
-        logger.info(f"Inserted {inserted} documents into {database_name}.{vector_store_name} (errors: {len(errors)})")
-        result = {"status": "success" if inserted == len(documents) else "partial", "inserted": inserted}
+                logger.error(f"Failed to process batch {batch_start}-{batch_end}: {e}", exc_info=True)
+                errors.append(f"Batch {batch_start}-{batch_end}: {str(e)}")
+
+        logger.info(f"TOOL END: insert_docs_vector_store. Inserted {inserted}/{len(documents)} documents (errors: {len(errors)})")
+        result = {"status": "success" if inserted == len(documents) else "partial", "inserted": inserted, "total": len(documents)}
         if errors:
-            result["errors"] = errors
+            result["errors"] = errors[:10]  # Limit error messages to avoid huge responses
+            if len(errors) > 10:
+                result["errors_truncated"] = len(errors) - 10
         return result
         
     async def search_vector_store(self, user_query: str, database_name: str, vector_store_name: str, k: int = 7) -> list:
         """
         Search a vector store for the most similar documents to a query using semantic search.
-        Parameters:
-            user_query (str): The search query string.
-            database_name (str): The database name.
-            vector_store_name (str): The vector store (table) name.
-            k (int, optional): Number of top results to retrieve (default 7).
+
+        Args:
+            user_query: The search query string.
+            database_name: The database name.
+            vector_store_name: The vector store (table) name.
+            k: Number of top results to retrieve (default 7).
+
         Returns:
             List of dicts with document, metadata, and distance.
         """
-        import json
+        logger.info(f"TOOL START: search_vector_store called for {database_name}.{vector_store_name}")
+
         # Input validation
         if not user_query or not isinstance(user_query, str):
             logger.error("user_query must be a non-empty string.")
@@ -753,12 +924,21 @@ class MariaDBServer:
         if not isinstance(k, int) or k <= 0:
             logger.error("k must be a positive integer.")
             raise ValueError("k must be a positive integer.")
-        # Generate embedding for the query
-        embedding = await embedding_service.embed(user_query)
+
+        # Generate embedding for the query with rate limiting
+        if _embedding_semaphore:
+            async with _embedding_semaphore:
+                embedding = await embedding_service.embed(user_query)
+                self._metrics["embeddings_generated"] += 1
+        else:
+            embedding = await embedding_service.embed(user_query)
+            self._metrics["embeddings_generated"] += 1
+
         emb_str = json.dumps(embedding)
+
         # Prepare the search query
         search_query = f"""
-            SELECT 
+            SELECT
                 document,
                 metadata,
                 VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) AS distance
@@ -767,18 +947,19 @@ class MariaDBServer:
             LIMIT %s
         """
         try:
-            results = await self._execute_query(search_query, params=(emb_str, k), database=database_name)
+            results = await self._execute_query(search_query, params=(emb_str, k), database=database_name, limit_results=False)
             for row in results:
                 if isinstance(row.get('metadata'), str):
                     try:
                         row['metadata'] = json.loads(row['metadata'])
-                    except Exception:
-                        pass
-            logger.info(f"Semantic search in {database_name}.{vector_store_name} returned {len(results)} results.")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse metadata JSON for document: {e}. Raw value: {row.get('metadata')[:100]}...")
+                        # Keep raw string if parsing fails
+            logger.info(f"TOOL END: search_vector_store. Returned {len(results)} results.")
             return results
         except Exception as e:
             logger.error(f"Failed to search vector store {database_name}.{vector_store_name}: {e}", exc_info=True)
-            return []
+            raise RuntimeError(f"Vector store search failed: {e}") from e
             
     # --- Tool Registration (Synchronous) ---
     def register_tools(self):
@@ -845,6 +1026,37 @@ class MariaDBServer:
                 
         logger.info("Registered MCP tools explicitly.")
 
+    def get_health(self) -> Dict[str, Any]:
+        """Returns health check information for the server."""
+        uptime_seconds = time.time() - self._start_time
+        pool_status = "connected" if self.pool is not None else "disconnected"
+
+        # Calculate average query time
+        avg_query_time = 0
+        if self._metrics["queries_executed"] > 0:
+            avg_query_time = self._metrics["total_query_time_ms"] / self._metrics["queries_executed"]
+
+        return {
+            "status": "healthy" if self.pool is not None else "unhealthy",
+            "uptime_seconds": round(uptime_seconds, 2),
+            "pool_status": pool_status,
+            "read_only_mode": self.is_read_only,
+            "embedding_provider": EMBEDDING_PROVIDER,
+            "metrics": {
+                "queries_executed": self._metrics["queries_executed"],
+                "query_errors": self._metrics["query_errors"],
+                "avg_query_time_ms": round(avg_query_time, 2),
+                "embeddings_generated": self._metrics["embeddings_generated"],
+                "pool_acquisitions": self._metrics["pool_acquisitions"],
+            }
+        }
+
+    async def _health_endpoint(self, request):
+        """Starlette endpoint handler for /health."""
+        health_data = self.get_health()
+        status_code = 200 if health_data["status"] == "healthy" else 503
+        return JSONResponse(health_data, status_code=status_code)
+
     # --- Async Main Server Logic ---
     async def run_async_server(self, transport="stdio", host="127.0.0.1", port=9001, path="/mcp"):
         """
@@ -868,20 +1080,24 @@ class MariaDBServer:
                         allow_methods=["GET", "POST"],
                         allow_headers=["*"],
                     ),
-                    Middleware(TrustedHostMiddleware, 
+                    Middleware(TrustedHostMiddleware,
                                allowed_hosts=ALLOWED_HOSTS)
                 ]
+                # Add health check route for HTTP/SSE transports
+                health_route = Route("/health", self._health_endpoint, methods=["GET"])
+                routes = [health_route]
+
             if transport == "sse":
-                transport_kwargs = {"host": host, "port": port, "middleware": middleware}
-                logger.info(f"Starting MCP server via {transport} on {host}:{port}...")
+                transport_kwargs = {"host": host, "port": port, "middleware": middleware, "routes": routes}
+                logger.info(f"Starting MCP server via {transport} on {host}:{port} (health: /health)...")
             elif transport == "http":
-                transport_kwargs = {"host": host, "port": port, "path": path, "middleware": middleware}
-                logger.info(f"Starting MCP server via {transport} on {host}:{port}{path}...")
+                transport_kwargs = {"host": host, "port": port, "path": path, "middleware": middleware, "routes": routes}
+                logger.info(f"Starting MCP server via {transport} on {host}:{port}{path} (health: /health)...")
             elif transport == "stdio":
-                 logger.info(f"Starting MCP server via {transport}...")
+                logger.info(f"Starting MCP server via {transport}...")
             else:
-                 logger.error(f"Unsupported transport type: {transport}")
-                 return 
+                logger.error(f"Unsupported transport type: {transport}")
+                return
 
             # 4. Run the appropriate async listener from FastMCP
             await self.mcp.run_async(transport=transport, **transport_kwargs)

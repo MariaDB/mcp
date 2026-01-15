@@ -58,17 +58,48 @@ root_logger.addHandler(file_handler)
 logger = logging.getLogger(__name__)
 
 # --- Database Configuration ---
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", 3306))
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
-DB_CHARSET = os.getenv("DB_CHARSET")
+# Support multiple databases via comma-separated values
+DB_HOSTS = os.getenv("DB_HOSTS", os.getenv("DB_HOST", "localhost")).split(",")
+DB_PORTS = [int(p) for p in os.getenv("DB_PORTS", os.getenv("DB_PORT", "3306")).split(",")]
+DB_USERS = os.getenv("DB_USERS", os.getenv("DB_USER", "")).split(",")
+DB_PASSWORDS = os.getenv("DB_PASSWORDS", os.getenv("DB_PASSWORD", "")).split(",")
+DB_NAMES = os.getenv("DB_NAMES", os.getenv("DB_NAME", "")).split(",")
+DB_CHARSETS = os.getenv("DB_CHARSETS", os.getenv("DB_CHARSET", "")).split(",")
+
+# Validate multiple database configuration - arrays should match in length
+if len(DB_HOSTS) > 1:
+    _min_len = min(len(DB_HOSTS), len(DB_USERS), len(DB_PASSWORDS))
+    if len(DB_HOSTS) != len(DB_USERS) or len(DB_HOSTS) != len(DB_PASSWORDS):
+        logger.warning(
+            f"Multiple database config length mismatch: "
+            f"DB_HOSTS={len(DB_HOSTS)}, DB_USERS={len(DB_USERS)}, DB_PASSWORDS={len(DB_PASSWORDS)}. "
+            f"Using first {_min_len} entries."
+        )
+        DB_HOSTS = DB_HOSTS[:_min_len]
+        DB_USERS = DB_USERS[:_min_len]
+        DB_PASSWORDS = DB_PASSWORDS[:_min_len]
+
+# Legacy single database support
+DB_HOST = DB_HOSTS[0]
+DB_PORT = DB_PORTS[0] if DB_PORTS else 3306
+DB_USER = DB_USERS[0] if DB_USERS else None
+DB_PASSWORD = DB_PASSWORDS[0] if DB_PASSWORDS else None
+DB_NAME = DB_NAMES[0] if DB_NAMES else None
+DB_CHARSET = DB_CHARSETS[0] if DB_CHARSETS and DB_CHARSETS[0] else None
+
+# --- Database Timeout Configuration ---
+DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", 10))  # seconds
+DB_READ_TIMEOUT = int(os.getenv("DB_READ_TIMEOUT", 30))  # seconds
+DB_WRITE_TIMEOUT = int(os.getenv("DB_WRITE_TIMEOUT", 30))  # seconds
 
 # --- MCP Server Configuration ---
 # Read-only mode
 MCP_READ_ONLY = os.getenv("MCP_READ_ONLY", "true").lower() == "true"
 MCP_MAX_POOL_SIZE = int(os.getenv("MCP_MAX_POOL_SIZE", 10))
+MCP_MAX_RESULTS = int(os.getenv("MCP_MAX_RESULTS", 10000))  # Max rows returned per query
+
+# --- Embedding Configuration ---
+EMBEDDING_MAX_CONCURRENT = int(os.getenv("EMBEDDING_MAX_CONCURRENT", 5))  # Max concurrent embedding API calls
 
 # --- Embedding Configuration ---
 # Provider selection ('openai' or 'gemini' or 'huggingface')
