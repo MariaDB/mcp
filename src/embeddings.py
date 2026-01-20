@@ -86,7 +86,7 @@ class EmbeddingService:
         logger.info(f"Initializing EmbeddingService with provider: {self.provider}")
 
         if self.provider == "openai":
-            if not AsyncOpenAI:
+            if AsyncOpenAI is None:
                 logger.error("OpenAI provider selected, but 'openai' library is not installed.")
                 raise ImportError("OpenAI library not found. Please install it.")
             if not OPENAI_API_KEY:
@@ -336,18 +336,24 @@ class EmbeddingService:
                         raise RuntimeError(f"Error with HuggingFace model '{target_model}': {e}")
             
                 # Convert numpy array to list of lists of floats (or list of floats)
-                embeddings_list: Union[List[float], List[List[float]]]
+                embeddings_list: List[List[float]]
                 if isinstance(embeddings_np, np.ndarray):
-                    embeddings_list = embeddings_np.tolist()
+                    raw_list = embeddings_np.tolist()
+                    # Ensure we have a list of lists for batch processing
+                    if raw_list and not isinstance(raw_list[0], list):
+                        # Single embedding case - wrap in list
+                        embeddings_list = [raw_list]
+                    else:
+                        embeddings_list = raw_list
                 else: # Should ideally not happen with sentence-transformers if encode ran
                     logger.warning("HuggingFace encode did not return a numpy array as expected.")
-                    embeddings_list = texts # Fallback, though likely incorrect
+                    raise RuntimeError("HuggingFace encoding failed to return valid embeddings.")
 
-                logger.debug(f"HuggingFace embedding(s) with model '{effective_model_name}' received. Count: {len(embeddings_list)}, Dimension: {len(embeddings_list[0]) if embeddings_list and isinstance(embeddings_list[0], list) and embeddings_list[0] else (len(embeddings_list) if embeddings_list and not isinstance(embeddings_list[0], list) else 'N/A')}")
-                
+                logger.debug(f"HuggingFace embedding(s) with model '{effective_model_name}' received. Count: {len(embeddings_list)}, Dimension: {len(embeddings_list[0]) if embeddings_list else 'N/A'}")
+
                 # Adjust return for single_input
                 if single_input:
-                    return embeddings_list[0] if embeddings_list and isinstance(embeddings_list, list) and embeddings_list[0] else embeddings_list
+                    return embeddings_list[0]
                 else:
                     return embeddings_list
             else:

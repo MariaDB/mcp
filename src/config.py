@@ -14,15 +14,15 @@ LOG_FILE_PATH = os.getenv("LOG_FILE", "logs/mcp_server.log")
 LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", 10 * 1024 * 1024))
 LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", 5))
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS")
-if ALLOWED_ORIGINS:
-    ALLOWED_ORIGINS = ALLOWED_ORIGINS.split(",")
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+if _allowed_origins_env:
+    ALLOWED_ORIGINS: list[str] = _allowed_origins_env.split(",")
 else:
     ALLOWED_ORIGINS = ["http://localhost", "http://127.0.0.1", "http://*", "https://localhost", "https://127.0.0.1", "vscode-file://vscode-app"]
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS")
-if ALLOWED_HOSTS:
-    ALLOWED_HOSTS = ALLOWED_HOSTS.split(",")
+_allowed_hosts_env = os.getenv("ALLOWED_HOSTS")
+if _allowed_hosts_env:
+    ALLOWED_HOSTS: list[str] = _allowed_hosts_env.split(",")
 else:
     ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 

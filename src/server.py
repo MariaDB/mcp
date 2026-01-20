@@ -860,6 +860,8 @@ class MariaDBServer:
 
             try:
                 # Generate embeddings with rate limiting
+                if embedding_service is None:
+                    raise RuntimeError("Embedding service not initialized. Ensure EMBEDDING_PROVIDER is configured.")
                 if _embedding_semaphore:
                     async with _embedding_semaphore:
                         embeddings = await embedding_service.embed(batch_docs)
@@ -889,7 +891,7 @@ class MariaDBServer:
                 errors.append(f"Batch {batch_start}-{batch_end}: {str(e)}")
 
         logger.info(f"TOOL END: insert_docs_vector_store. Inserted {inserted}/{len(documents)} documents (errors: {len(errors)})")
-        result = {"status": "success" if inserted == len(documents) else "partial", "inserted": inserted, "total": len(documents)}
+        result: Dict[str, Any] = {"status": "success" if inserted == len(documents) else "partial", "inserted": inserted, "total": len(documents)}
         if errors:
             result["errors"] = errors[:10]  # Limit error messages to avoid huge responses
             if len(errors) > 10:
@@ -926,6 +928,8 @@ class MariaDBServer:
             raise ValueError("k must be a positive integer.")
 
         # Generate embedding for the query with rate limiting
+        if embedding_service is None:
+            raise RuntimeError("Embedding service not initialized. Ensure EMBEDDING_PROVIDER is configured.")
         if _embedding_semaphore:
             async with _embedding_semaphore:
                 embedding = await embedding_service.embed(user_query)
@@ -953,7 +957,8 @@ class MariaDBServer:
                     try:
                         row['metadata'] = json.loads(row['metadata'])
                     except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse metadata JSON for document: {e}. Raw value: {row.get('metadata')[:100]}...")
+                        raw_meta = row.get('metadata') or ''
+                        logger.warning(f"Failed to parse metadata JSON for document: {e}. Raw value: {raw_meta[:100]}...")
                         # Keep raw string if parsing fails
             logger.info(f"TOOL END: search_vector_store. Returned {len(results)} results.")
             return results

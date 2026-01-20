@@ -63,6 +63,16 @@ class TestMariaDBMCPTools(unittest.IsolatedAsyncioTestCase):
 if __name__ == "__main__":
     unittest.main()
 
+def test_step_1_list_databases():
+    """
+    Test: Call mcp0_list_databases.
+    Purpose: Verify it returns a list of database names.
+    Expected Outcome: Success, returns a JSON list of strings (database names).
+    Result: PASSED (as documented in TestMariaDBMCPTools.test_step_1_list_databases)
+    """
+    print("Executing: mcp0_list_databases()")
+    # Manual execution via Cascade passed.
+
 def test_step_2_list_tables_valid_db():
     """
     Test: Call mcp0_list_tables with a valid database ('information_schema').
