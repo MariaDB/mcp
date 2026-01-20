@@ -121,8 +121,6 @@ class MariaDBServer:
                 "autocommit": self.autocommit,
                 "pool_recycle": 3600,
                 "connect_timeout": DB_CONNECT_TIMEOUT,
-                "read_timeout": DB_READ_TIMEOUT,
-                "write_timeout": DB_WRITE_TIMEOUT,
             }
 
             if DB_CHARSET:
@@ -193,8 +191,6 @@ class MariaDBServer:
                     "autocommit": self.autocommit,
                     "pool_recycle": 3600,
                     "connect_timeout": DB_CONNECT_TIMEOUT,
-                    "read_timeout": DB_READ_TIMEOUT,
-                    "write_timeout": DB_WRITE_TIMEOUT,
                 }
                 if charset:
                     pool_params["charset"] = charset
@@ -202,10 +198,11 @@ class MariaDBServer:
                 self.pools[conn_name] = await asyncmy.create_pool(**pool_params)
                 logger.info(f"Pool '{conn_name}' initialized for {user}@{host}:{port}/{db_name}")
 
-                # Set first pool as default
-                if i == 0:
+                # Set first successful pool as default
+                if self.pool is None:
                     self.pool = self.pools[conn_name]
                     await self._warmup_pool()
+                    logger.info(f"Default pool set to '{conn_name}'")
             except Exception as e:
                 logger.error(f"Failed to initialize pool for {conn_name}: {e}", exc_info=True)
 
