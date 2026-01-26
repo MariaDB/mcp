@@ -9,5 +9,6 @@ src/logs/*
 .env
 uv.lock
 .DS_Store
-.env
-.env
+
+# Downloaded data files
+scripts/geography_data/
