@@ -1,3 +1,6 @@
+
+version: "3.8"
+
 services:
   mariadb-server:
     image: mariadb:11
@@ -10,10 +13,11 @@ services:
     ports:
       - "3306:3306"
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-p'rootpassword123'"]
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -prootpassword123 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
+
   mariadb-mcp:
     build: .
     container_name: mariadb-mcp
@@ -21,5 +25,10 @@ services:
     ports:
       - "9001:9001"
     depends_on:
-      mariadb-server:
-        condition: service_healthy
+      - mariadb-server
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 9001)); s.close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
