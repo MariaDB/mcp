@@ -1075,26 +1075,28 @@ class MariaDBServer:
             # 3. Prepare transport arguments
             transport_kwargs = {}
             if transport != "stdio":
+                # Broaden CORS and include OPTIONS and credentials to accommodate
+                # browser-based clients and websocket upgrade flows used by some
+                # agent UIs. Keep TrustedHostMiddleware to limit allowed hosts.
                 middleware = [
                     Middleware(
                         CORSMiddleware,
                         allow_origins=ALLOWED_ORIGINS,
-                        allow_methods=["GET", "POST"],
+                        allow_methods=["GET", "POST", "OPTIONS"],
                         allow_headers=["*"],
+                        allow_credentials=True,
+                        expose_headers=["*"],
                     ),
                     Middleware(TrustedHostMiddleware,
                                allowed_hosts=ALLOWED_HOSTS)
                 ]
-                # Add health check route for HTTP/SSE transports
-                health_route = Route("/health", self._health_endpoint, methods=["GET"])
-                routes = [health_route]
 
             if transport == "sse":
-                transport_kwargs = {"host": host, "port": port, "middleware": middleware, "routes": routes}
-                logger.info(f"Starting MCP server via {transport} on {host}:{port} (health: /health)...")
+                transport_kwargs = {"host": host, "port": port, "middleware": middleware}
+                logger.info(f"Starting MCP server via {transport} on {host}:{port}...")
             elif transport == "http":
-                transport_kwargs = {"host": host, "port": port, "path": path, "middleware": middleware, "routes": routes}
-                logger.info(f"Starting MCP server via {transport} on {host}:{port}{path} (health: /health)...")
+                transport_kwargs = {"host": host, "port": port, "path": path, "middleware": middleware}
+                logger.info(f"Starting MCP server via {transport} on {host}:{port}{path}...")
             elif transport == "stdio":
                 logger.info(f"Starting MCP server via {transport}...")
             else:

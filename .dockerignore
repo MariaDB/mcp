@@ -1,0 +1,26 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Logs and caches
+logs/
+*.log
+*.pyc
+*.pyo
+
+# Downloaded data
+scripts/geography_data/
+
+# Local env files (use .env in container)
+.env.local
+.env.*.local

@@ -23,9 +23,14 @@ import asyncio
 import asyncmy
 
 # Database config from environment
-# Use localhost for host access (Docker maps port 3306)
+# Check if running inside Docker (container has /.dockerenv)
+_inside_docker = os.path.exists("/.dockerenv")
 _db_host = os.getenv("DB_HOST", "localhost")
-DB_HOST = "127.0.0.1" if _db_host in ("mariadb", "mysql", "db") else _db_host
+# Only convert to localhost when running on host machine, not inside Docker
+if not _inside_docker and _db_host in ("mariadb", "mysql", "db"):
+    DB_HOST = "127.0.0.1"
+else:
+    DB_HOST = _db_host
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 # Use root credentials for database creation (can override with env vars)
 DB_USER = os.getenv("DB_ROOT_USER", "root")

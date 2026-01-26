@@ -13,7 +13,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # Patch environment for local testing
 import os
-os.environ["DB_HOST"] = "127.0.0.1"  # Use localhost instead of docker hostname
+# Detect if running inside Docker container
+if not os.path.exists("/.dockerenv"):
+    # Running on host - use localhost to connect via mapped port
+    os.environ["DB_HOST"] = "127.0.0.1"
+# Inside Docker, keep DB_HOST as-is (uses docker network hostname)
 
 from server import MariaDBServer
 
