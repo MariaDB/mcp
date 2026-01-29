@@ -27,6 +27,10 @@ uv run -m pytest src/tests/test_mcp_server.py::TestMariaDBMCPTools::test_list_da
 
 # Docker
 docker compose up --build
+docker compose logs -f mariadb-mcp
+
+# Check server logs
+tail -f logs/mcp_server.log
 ```
 
 ## Architecture
@@ -45,11 +49,11 @@ docker compose up --build
    - `DB_HOSTS`, `DB_PORTS`, `DB_USERS`, `DB_PASSWORDS`, `DB_NAMES`, `DB_CHARSETS`
    - First connection becomes default pool; others stored in `self.pools` dict keyed by `host:port`
 
-2. **Read-Only Mode**: `MCP_READ_ONLY=true` (default) allows only SELECT/SHOW/DESCRIBE/USE. SQL comments are stripped via regex in `_execute_query()` (lines 189-194) before checking query prefix.
+2. **Read-Only Mode**: `MCP_READ_ONLY=true` (default) allows only SELECT/SHOW/DESCRIBE/USE. SQL comments (`--` and `/* */`) are stripped via regex in `_execute_query()` before checking query prefix to prevent bypass attempts.
 
-3. **Conditional Tool Registration**: Vector store tools only registered when `EMBEDDING_PROVIDER` is set. Check at `register_tools()` in server.py:879 (`if EMBEDDING_PROVIDER is not None`).
+3. **Conditional Tool Registration**: Vector store tools only registered when `EMBEDDING_PROVIDER` is set. Check in `register_tools()` method (`if EMBEDDING_PROVIDER is not None`).
 
-4. **Singleton EmbeddingService**: Created at module load (server.py:30-32) only when `EMBEDDING_PROVIDER` is configured. Used by all vector store tools.
+4. **Singleton EmbeddingService**: Created at module load only when `EMBEDDING_PROVIDER` is configured. Used by all vector store tools. Embedding dimensions vary by model: OpenAI text-embedding-3-small=1536, large=3072; Gemini=768; HuggingFace varies by model (e.g., BGE-M3=1024).
 
 5. **Middleware Stack**: HTTP/SSE transports use Starlette middleware for CORS (`ALLOWED_ORIGINS`) and trusted host filtering (`ALLOWED_HOSTS`).
 
@@ -88,6 +92,12 @@ CREATE TABLE vector_store_name (
 
 **Logging:** `LOG_LEVEL` (INFO), `LOG_FILE` (logs/mcp_server.log), `LOG_MAX_BYTES` (10MB), `LOG_BACKUP_COUNT` (5)
 
+## Docker Health Checks
+
+Both containers have health checks configured in `docker-compose.yml`:
+- **mariadb**: Uses `mariadb-admin ping` (note: MariaDB 11+ renamed `mysqladmin` to `mariadb-admin`)
+- **mariadb-mcp**: Uses TCP socket connection check on port 9001
+
 ## Health Check & Metrics
 
 HTTP/SSE transports expose `/health` endpoint returning:
@@ -114,3 +124,11 @@ HTTP/SSE transports expose `/health` endpoint returning:
 ## Skills
 
 - `mariadb-debug` - Debug database connectivity, embedding errors, MCP tool failures
+
+## Testing Notes
+
+- Tests in `src/tests/` use unittest framework with pytest runner
+- Integration tests require live MariaDB with configured `.env`
+- Tests start server with stdio transport using FastMCP test client
+- Vector store tests require `EMBEDDING_PROVIDER` to be configured
+- Run single test: `uv run -m pytest src/tests/test_mcp_server.py::TestClass::test_method -v`
