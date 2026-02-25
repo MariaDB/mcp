@@ -38,7 +38,6 @@ ENV PATH="/app/.venv/bin:${PATH}"
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/scripts /app/scripts
-COPY --from=builder /app/.env* /app/
 
 EXPOSE 9001
 

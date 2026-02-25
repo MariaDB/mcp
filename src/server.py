@@ -1028,6 +1028,10 @@ class MariaDBServer:
                 
         logger.info("Registered MCP tools explicitly.")
 
+        # Register /health endpoint for HTTP/SSE transports
+        self.mcp.custom_route("/health", methods=["GET"])(self._health_endpoint)
+        logger.info("Registered /health endpoint.")
+
     def get_health(self) -> Dict[str, Any]:
         """Returns health check information for the server."""
         uptime_seconds = time.time() - self._start_time
