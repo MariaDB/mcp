@@ -27,6 +27,10 @@ RUN pip install --upgrade pip setuptools wheel && \
 
 FROM python:3.13-slim
 
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 ENV PATH="/app/.venv/bin:${PATH}"
 
@@ -38,4 +42,8 @@ COPY --from=builder /app/.env* /app/
 
 EXPOSE 9001
 
-CMD ["python", "src/server.py", "--host", "0.0.0.0", "--transport", "sse"]
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:9001/health || exit 1
+
+CMD ["python", "src/server.py", "--host", "0.0.0.0", "--port", "9001", "--transport", "sse"]

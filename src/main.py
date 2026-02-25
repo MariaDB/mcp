@@ -1,5 +1,5 @@
 def main():
-    print("Hello from mcp-mariadb-server!")
+    print("Hello from mariadb-mcp!")
 
 
 if __name__ == "__main__":
