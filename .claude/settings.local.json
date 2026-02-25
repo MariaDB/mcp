@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git remote add:*)",
+      "Bash(where:*)",
+      "Bash(/c/Users/brunstof/AppData/Local/gh/bin/gh.exe:*)",
+      "mcp__github__fork_repository",
+      "mcp__github__create_pull_request",
+      "mcp__github__get_pull_request",
+      "mcp__MCP_DOCKER__mcp-find",
+      "mcp__MCP_DOCKER__mcp-config-set",
+      "mcp__MCP_DOCKER__mcp-add",
+      "mcp__MCP_DOCKER__browser_navigate"
     ]
   }
 }
