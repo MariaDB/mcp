@@ -89,8 +89,6 @@ DB_CHARSET = DB_CHARSETS[0] if DB_CHARSETS and DB_CHARSETS[0] else None
 
 # --- Database Timeout Configuration ---
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", 10))  # seconds
-DB_READ_TIMEOUT = int(os.getenv("DB_READ_TIMEOUT", 30))  # seconds
-DB_WRITE_TIMEOUT = int(os.getenv("DB_WRITE_TIMEOUT", 30))  # seconds
 
 # --- MCP Server Configuration ---
 # Read-only mode
@@ -100,8 +98,6 @@ MCP_MAX_RESULTS = int(os.getenv("MCP_MAX_RESULTS", 10000))  # Max rows returned 
 
 # --- Embedding Configuration ---
 EMBEDDING_MAX_CONCURRENT = int(os.getenv("EMBEDDING_MAX_CONCURRENT", 5))  # Max concurrent embedding API calls
-
-# --- Embedding Configuration ---
 # Provider selection ('openai' or 'gemini' or 'huggingface')
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")
 EMBEDDING_PROVIDER = EMBEDDING_PROVIDER.lower() if EMBEDDING_PROVIDER else None

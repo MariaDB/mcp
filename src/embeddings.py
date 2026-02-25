@@ -5,6 +5,9 @@ import asyncio
 from typing import List, Optional, Dict, Any, Union, Awaitable
 import numpy as np
 
+# Maximum number of HuggingFace models to keep in memory simultaneously
+_HF_MODEL_CACHE_MAX_SIZE = 5
+
 # Import configuration variables and the logger instance
 from config import (
     EMBEDDING_PROVIDER,
@@ -327,7 +330,11 @@ class EmbeddingService:
                     try:
                         from sentence_transformers import SentenceTransformer
                         model_instance = SentenceTransformer(target_model)
-                        # Cache the loaded model for future use
+                        # Evict oldest entry if cache is at capacity
+                        if len(self._hf_model_cache) >= _HF_MODEL_CACHE_MAX_SIZE:
+                            oldest_key = next(iter(self._hf_model_cache))
+                            del self._hf_model_cache[oldest_key]
+                            logger.info(f"HF model cache full ({_HF_MODEL_CACHE_MAX_SIZE}), evicted '{oldest_key}'")
                         self._hf_model_cache[target_model] = model_instance
                         embeddings_np = model_instance.encode(texts)
                         logger.info(f"HuggingFace model '{target_model}' loaded and cached successfully.")

@@ -10,20 +10,10 @@ WORKDIR /app
 # Copy project files
 COPY . .
 
-# Create virtual environment and install dependencies using pip
-RUN python -m venv /app/.venv
+# Install uv and use it to install dependencies from pyproject.toml/uv.lock
+RUN pip install --no-cache-dir uv
 ENV PATH="/app/.venv/bin:${PATH}"
-
-# Upgrade pip and install project dependencies
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
-    asyncmy>=0.2.10 \
-    fastmcp[websockets]==2.12.1 \
-    google-genai>=1.15.0 \
-    openai>=1.78.1 \
-    python-dotenv>=1.1.0 \
-    sentence-transformers>=4.1.0 \
-    tokenizers==0.21.2
+RUN uv sync --no-dev
 
 FROM python:3.13-slim
 

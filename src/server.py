@@ -6,7 +6,7 @@ from config import (
     DB_HOSTS, DB_PORTS, DB_USERS, DB_PASSWORDS, DB_NAMES, DB_CHARSETS,
     MCP_READ_ONLY, MCP_MAX_POOL_SIZE, EMBEDDING_PROVIDER,
     ALLOWED_ORIGINS, ALLOWED_HOSTS,
-    DB_CONNECT_TIMEOUT, DB_READ_TIMEOUT, DB_WRITE_TIMEOUT,
+    DB_CONNECT_TIMEOUT,
     EMBEDDING_MAX_CONCURRENT, MCP_MAX_RESULTS,
     logger
 )
@@ -219,7 +219,8 @@ class MariaDBServer:
                 except Exception as e:
                     logger.error(f"Error closing pool '{conn_name}': {e}", exc_info=True)
             self.pools.clear()
-        
+            self.pool = None  # Prevent double-close; default pool was already closed above
+
         if self.pool:
             logger.info("Closing database connection pool...")
             try:
