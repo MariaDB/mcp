@@ -1,24 +1,41 @@
+name: mcp-mariadb
+
 services:
   mariadb-server:
-    image: mariadb:11
+    image: mariadb:11.2
     container_name: mariadb
     environment:
       MARIADB_ROOT_PASSWORD: rootpassword123
       MARIADB_DATABASE: demo
       MARIADB_USER: user
       MARIADB_PASSWORD: password123
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "no"
     ports:
       - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -prootpassword123 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+    networks:
+      - mcp-network
 
   mariadb-mcp:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: mariadb-mcp
-    env_file: .env
+    environment:
+      - DB_HOST=mariadb
+      - DB_USER=user
+      - DB_PASSWORD=password123
+      - DB_PORT=3306
+      - DB_NAME=demo
+      - MCP_READ_ONLY=false
+      - MCP_MAX_POOL_SIZE=10
     ports:
       - "9001:9001"
     depends_on:
@@ -29,4 +46,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - mcp-network
 
+volumes:
+  mariadb_data:
+    driver: local
+
+networks:
+  mcp-network:
+    driver: bridge
