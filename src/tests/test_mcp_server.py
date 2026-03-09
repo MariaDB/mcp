@@ -5,6 +5,7 @@ from fastmcp.client import Client
 from server import MariaDBServer
 import json
 import random
+from asyncmy.errors import OperationalError
 
 # This file contains integration tests for the MCP server
 # It tests the server's tools using the FastMCP client with HTTP transport
@@ -108,6 +109,22 @@ class TestMariaDBMCPTools(unittest.IsolatedAsyncioTestCase):
                 except fastmcp.exceptions.ToolError as e:
                     # unfortunately, ToolError does not have a message that we can check
                     pass
+            tg.cancel_scope.cancel()
+
+    async def test_execute_query_literal_percent_no_params(self):
+        async with anyio.create_task_group() as tg:
+            await self.task_group_helper(tg)
+            async with self.client:
+                result = await self.client.call_tool(
+                    'execute_sql',
+                    {
+                        'database_name': 'information_schema',
+                        'sql_query': "SHOW VARIABLES LIKE '%version%'",
+                    },
+                )
+                result = self.extract_result(result)
+                self.assertIsInstance(result, list)
+                self.assertGreaterEqual(len(result), 1)
             tg.cancel_scope.cancel()
 
     async def test_execute_sql_parameterized(self):

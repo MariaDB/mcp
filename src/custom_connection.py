@@ -7,9 +7,11 @@ for security reasons (to prevent SQL injection via multiple statements).
 
 import asyncio
 from asyncmy.connection import Connection
-from asyncmy.constants.CLIENT import MULTI_STATEMENTS
+from asyncmy.constants.CLIENT import MULTI_STATEMENTS, LOCAL_FILES
 from asyncmy.pool import Pool
 from asyncmy.contexts import _PoolContextManager
+
+from config import MCP_READ_ONLY
 
 
 class SafeConnection(Connection):
@@ -30,6 +32,9 @@ class SafeConnection(Connection):
         """
         # Clear the MULTI_STATEMENTS bit (bit 16 = 0x10000 = 65536) before connecting
         self._client_flag = self._client_flag & ~MULTI_STATEMENTS
+
+        if MCP_READ_ONLY:
+            self._client_flag = self._client_flag & ~LOCAL_FILES
         
         # Now proceed with normal connection
         return await super().connect()

@@ -9,11 +9,15 @@ import unittest
 import asyncio
 import sys
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from server import MariaDBServer
+from custom_connection import SafeConnection
+from asyncmy.connection import Connection
+from asyncmy.constants.CLIENT import MULTI_STATEMENTS, LOCAL_FILES
 
 
 class TestQueryValidation(unittest.TestCase):
@@ -24,17 +28,26 @@ class TestQueryValidation(unittest.TestCase):
         self.server = MariaDBServer(server_name="TestServer")
         # Force read-only mode to enable validation
         self.server.is_read_only = True
-        self.loop = asyncio.get_event_loop()
+        
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("Database access not configured for unit tests"))
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        pool = MagicMock()
+        pool.acquire = MagicMock(return_value=acquire_cm)
+        self.server.pool = pool
+
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
     
     def tearDown(self):
         """Clean up after tests."""
-        if self.server.pool:
-            self.loop.run_until_complete(self.server.close_pool())
+        try:
+            self.loop.close()
+        finally:
+            asyncio.set_event_loop(None)
     
     async def _test_query_blocked(self, query: str, expected_error_msg: str):
         """Helper to test that a query is blocked."""
-        await self.server.initialize_pool()
-        
         with self.assertRaises(PermissionError) as context:
             await self.server._execute_query(query)
         
@@ -42,8 +55,6 @@ class TestQueryValidation(unittest.TestCase):
     
     async def _test_query_allowed(self, query: str):
         """Helper to test that a query is allowed (doesn't raise PermissionError for validation)."""
-        await self.server.initialize_pool()
-        
         # We expect this might fail with database errors, but NOT with PermissionError
         # for validation reasons. We're only testing the validation logic.
         try:
@@ -197,6 +208,166 @@ class TestQueryValidation(unittest.TestCase):
                 self.loop.run_until_complete(
                     self._test_query_allowed(query)
                 )
+
+
+class TestClientCapabilityAndPrivilegeWarnings(unittest.IsolatedAsyncioTestCase):
+    async def test_safe_connection_clears_local_files_when_read_only(self):
+        conn = SafeConnection(host="localhost", user="u", password="p", database="d")
+
+        conn._client_flag = conn._client_flag | MULTI_STATEMENTS | LOCAL_FILES
+        self.assertTrue(bool(conn._client_flag & MULTI_STATEMENTS))
+        self.assertTrue(bool(conn._client_flag & LOCAL_FILES))
+
+        with patch("custom_connection.MCP_READ_ONLY", True), patch.object(
+            Connection, "connect", new=AsyncMock(return_value=None)
+        ):
+            await conn.connect()
+
+        self.assertFalse(bool(conn._client_flag & MULTI_STATEMENTS))
+        self.assertFalse(bool(conn._client_flag & LOCAL_FILES))
+
+    async def test_safe_connection_does_not_clear_local_files_when_not_read_only(self):
+        conn = SafeConnection(host="localhost", user="u", password="p", database="d")
+
+        conn._client_flag = conn._client_flag | MULTI_STATEMENTS | LOCAL_FILES
+        self.assertTrue(bool(conn._client_flag & MULTI_STATEMENTS))
+        self.assertTrue(bool(conn._client_flag & LOCAL_FILES))
+
+        with patch("custom_connection.MCP_READ_ONLY", False), patch.object(
+            Connection, "connect", new=AsyncMock(return_value=None)
+        ):
+            await conn.connect()
+
+        self.assertFalse(bool(conn._client_flag & MULTI_STATEMENTS))
+        self.assertTrue(bool(conn._client_flag & LOCAL_FILES))
+
+    async def test_warns_when_file_privilege_present(self):
+        server = MariaDBServer(server_name="TestServer")
+        server.is_read_only = True
+
+        cursor = MagicMock()
+        cursor.__aenter__ = AsyncMock(return_value=cursor)
+        cursor.__aexit__ = AsyncMock(return_value=None)
+        cursor.execute = AsyncMock(return_value=None)
+
+        async def fetchone_side_effect():
+            return ("'testuser'@'localhost'",)
+
+        async def fetchall_side_effect():
+            return [("GRANT FILE ON *.* TO 'testuser'@'localhost'",)]
+
+        cursor.fetchone = AsyncMock(side_effect=fetchone_side_effect)
+        cursor.fetchall = AsyncMock(side_effect=fetchall_side_effect)
+
+        conn = MagicMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=None)
+        conn.cursor = MagicMock(return_value=cursor)
+
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+
+        pool = MagicMock()
+        pool.acquire = MagicMock(return_value=acquire_cm)
+        server.pool = pool
+
+        with patch("server.logger") as mock_logger:
+            await server._warn_if_file_privilege_enabled()
+            self.assertTrue(mock_logger.error.called)
+
+    async def test_does_not_warn_when_not_read_only(self):
+        server = MariaDBServer(server_name="TestServer")
+        server.is_read_only = False
+
+        with patch("server.logger") as mock_logger:
+            if server.is_read_only:
+                await server._warn_if_file_privilege_enabled()
+            self.assertFalse(mock_logger.error.called)
+
+
+@unittest.skipUnless(
+    os.getenv("MCP_RUN_PRIVILEGE_INTEGRATION_TESTS", "false").lower() == "true",
+    "Integration test disabled. Set MCP_RUN_PRIVILEGE_INTEGRATION_TESTS=true to enable.",
+)
+class TestPrivilegeWarningIntegration(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        import asyncmy
+
+        self._asyncmy = asyncmy
+
+        self.admin_host = os.getenv("DB_HOST", "localhost")
+        self.admin_port = int(os.getenv("DB_PORT", "3306"))
+        self.admin_user = os.getenv("DB_ADMIN_USER") or os.getenv("DB_USER")
+        self.admin_password = os.getenv("DB_ADMIN_PASSWORD") or os.getenv("DB_PASSWORD")
+        self.db_name = os.getenv("DB_NAME")
+
+        if not self.admin_user or self.admin_password is None:
+            self.skipTest("Admin credentials not available via DB_ADMIN_USER/DB_ADMIN_PASSWORD or DB_USER/DB_PASSWORD")
+        if not self.db_name:
+            self.skipTest("DB_NAME must be set for this integration test")
+
+        self.admin_conn = await asyncmy.connect(
+            host=self.admin_host,
+            port=self.admin_port,
+            user=self.admin_user,
+            password=self.admin_password,
+            db=self.db_name,
+            autocommit=True,
+        )
+
+        suffix = str(os.getpid())
+        self.user_no_file = f"mcp_test_nofile_{suffix}"
+        self.user_with_file = f"mcp_test_file_{suffix}"
+        self.test_password = "mcp_test_pw_123!"
+        self.host = "%"
+
+        async with self.admin_conn.cursor() as cur:
+            await cur.execute(f"DROP USER IF EXISTS '{self.user_no_file}'@'{self.host}'")
+            await cur.execute(f"DROP USER IF EXISTS '{self.user_with_file}'@'{self.host}'")
+
+            await cur.execute(
+                f"CREATE USER '{self.user_no_file}'@'{self.host}' IDENTIFIED BY '{self.test_password}'"
+            )
+            await cur.execute(
+                f"CREATE USER '{self.user_with_file}'@'{self.host}' IDENTIFIED BY '{self.test_password}'"
+            )
+
+            await cur.execute(f"GRANT SELECT ON `{self.db_name}`.* TO '{self.user_no_file}'@'{self.host}'")
+            await cur.execute(f"GRANT SELECT ON `{self.db_name}`.* TO '{self.user_with_file}'@'{self.host}'")
+            await cur.execute(f"GRANT FILE ON *.* TO '{self.user_with_file}'@'{self.host}'")
+
+    async def asyncTearDown(self):
+        try:
+            async with self.admin_conn.cursor() as cur:
+                await cur.execute(f"DROP USER IF EXISTS '{self.user_no_file}'@'{self.host}'")
+                await cur.execute(f"DROP USER IF EXISTS '{self.user_with_file}'@'{self.host}'")
+        finally:
+            try:
+                await self.admin_conn.ensure_closed()
+            except Exception:
+                pass
+
+    async def _run_server_init_and_capture_error(self, user: str) -> bool:
+        server = MariaDBServer(server_name="TestServer")
+        server.is_read_only = True
+
+        with patch("server.DB_HOST", self.admin_host), patch("server.DB_PORT", self.admin_port), patch(
+            "server.DB_USER", user
+        ), patch("server.DB_PASSWORD", self.test_password), patch("server.DB_NAME", self.db_name):
+            with self.assertLogs(level="ERROR") as cm:
+                await server.initialize_pool()
+                await server.close_pool()
+
+        return any("global FILE privilege" in msg for msg in cm.output)
+
+    async def test_file_privilege_user_triggers_warning(self):
+        warned = await self._run_server_init_and_capture_error(self.user_with_file)
+        self.assertTrue(warned)
+
+    async def test_non_file_privilege_user_does_not_trigger_warning(self):
+        warned = await self._run_server_init_and_capture_error(self.user_no_file)
+        self.assertFalse(warned)
 
 
 if __name__ == '__main__':
