@@ -119,9 +119,12 @@ class MariaDBServer:
 
     async def initialize_pool(self):
         """Initializes the asyncmy connection pool within the running event loop."""
-        if not all([DB_USER, DB_PASSWORD]):
-             logger.error("Cannot initialize pool due to missing database credentials.")
-             raise ConnectionError("Missing database credentials for pool initialization.")
+        if not DB_USER:
+            logger.error("Cannot initialize pool: DB_USER is empty or missing")
+            raise ConnectionError("Missing DB_USER for pool initialization.")
+        if DB_PASSWORD is None:
+            logger.error("Cannot initialize pool: DB_PASSWORD is missing")
+            raise ConnectionError("Missing DB_PASSWORD for pool initialization.")
 
         if self.pool is not None:
             logger.info("Connection pool already initialized.")
@@ -266,10 +269,7 @@ class MariaDBServer:
                         logger.info(f"Switching database context from '{actual_current_db}' to '{database}'")
                         await cursor.execute(f"USE `{database}`")
 
-                    if params is None:
-                        await cursor.execute(sql)
-                    else:
-                        await cursor.execute(sql, params)
+                    await cursor.execute(sql, params)
                     results = await cursor.fetchall()
                     logger.info(f"Query executed successfully, {len(results)} rows returned.")
                     return results if results else []
