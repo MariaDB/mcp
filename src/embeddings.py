@@ -1,9 +1,12 @@
+import json
 import logging
 import sys
 import os
 import asyncio
 from typing import List, Optional, Dict, Any, Union, Awaitable
 import numpy as np
+import requests
+from tqdm import tqdm
 
 # Import configuration variables and the logger instance
 from config import (
@@ -11,6 +14,9 @@ from config import (
     OPENAI_API_KEY,
     GEMINI_API_KEY,
     HF_MODEL,
+    OLLAMA_HOST,
+    OLLAMA_PORT,
+    OLLAMA_MODEL,
     logger
 )
 
@@ -43,6 +49,13 @@ except ImportError as e:
     genai = None # type: ignore
     GoogleAPICoreExceptions = None # type: ignore
 
+# Import Ollama client library
+try:
+    import ollama
+    logger.info("Successfully imported ollama")
+except ImportError as e:
+    logger.warning(f"Ollama library not installed. Ollama provider will not be available. Error: {e}")
+
 # --- Model Definitions ---
 # Define allowed models and defaults for each provider
 # OpenAI Embedding Models
@@ -65,6 +78,24 @@ DEFAULT_HF_MODEL: str = "BAAI/bge-m3"
 HF_MODEL_DIMENSIONS = {
     "intfloat/multilingual-e5-large-instruct": 1024,
     "BAAI/bge-m3": 1024
+}
+# Open Embedding Models - Ollama
+ALLOWED_OLLAMA_MODELS: List[str] = ["nomic-embed-text" , "embeddinggemma", "mxbai-embed-large", 
+                                    "bge-m3", "all-minilm", "snowflake-arctic-embed", "snowflake-arctic-embed2", 
+                                    "bge-large", "paraphrase-multilingual", "granite-embedding", "qwen3-embedding"]
+DEFAULT_OLLAMA_MODEL: str = "nomic-embed-text"
+OLLAMA_MODEL_DIMENSIONS = {
+    "nomic-embed-text": 768,
+    "embeddinggemma": 768,
+    "mxbai-embed-large": 1024, 
+    "bge-m3": 1024, 
+    "all-minilm": 384, 
+    "snowflake-arctic-embed": 1024, 
+    "snowflake-arctic-embed2": 1024, 
+    "bge-large": 1024, 
+    "paraphrase-multilingual": 384, 
+    "granite-embedding": 1024, 
+    "qwen3-embedding:": 1536
 }
 
 class EmbeddingService:
@@ -141,6 +172,46 @@ class EmbeddingService:
                 logger.error(f"Failed to initialize HuggingFace SentenceTransformer with model '{HF_MODEL}': {e}", exc_info=True)
                 self.huggingface_client = None # Ensure it's None if init fails
                 raise RuntimeError(f"HuggingFace SentenceTransformer (model: {HF_MODEL}) initialization failed: {e}")
+        elif self.provider == "ollama":
+            if not OLLAMA_MODEL: # From config.py
+                logger.error("EMBEDDING_PROVIDER is 'ollama' but OLLAMA_MODEL is missing in config.")
+                raise ValueError("Ollama model (OLLAMA_MODEL) is required in config for the Ollama provider.")
+            try:
+                response = requests.get(f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/version", timeout=2) 
+                if response.status_code == 200: # Check Ollama server is running
+                    self.default_model = OLLAMA_MODEL
+                    self.allowed_models = ALLOWED_OLLAMA_MODELS
+                    logger.info(f"Initializing ollama with configured OLLAMA_MODEL: {self.default_model}")
+                    response = requests.post(f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/pull", json={"model": OLLAMA_MODEL}, stream=True) # Download the embedding model
+                    # Download ProgressBar 
+                    pbar = None
+                    current_total = None
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        data = json.loads(line.decode("utf-8"))
+                        if "total" in data and data["total"] != current_total:
+                            if pbar:
+                                pbar.close()
+                            current_total = data["total"]
+                            pbar = tqdm(total=data["total"], unit="B", unit_scale=True, dynamic_ncols=True, leave=True)
+                        if pbar and "completed" in data:
+                            pbar.n = data["completed"]
+                            pbar.refresh()
+                        if data.get("status") == "success":
+                            if pbar:
+                                pbar.close()
+                            break
+                    # Initialize ollama Client
+                    self.ollama_client = ollama.Client(host=f"http://{OLLAMA_HOST}:{OLLAMA_PORT}")
+                    logger.info(f"Ollama provider initialized. Default model (from config.OLLAMA_MODEL): '{self.default_model}'. Client loaded.")
+                else:
+                    logger.error("Ollama server is NOT running. Start it with: 'ollama serve'")
+                    self.ollama_client = None # Ensure it's None if init fails
+            except Exception as e:
+                logger.error(f"Failed to initialize ollama with model '{OLLAMA_MODEL}': {e}", exc_info=True)
+                self.ollama_client = None # Ensure it's None if init fails
+                raise RuntimeError(f"Ollama (model: {OLLAMA_MODEL}) initialization failed: {e}")
         else:
             logger.error(f"Unsupported embedding provider configured: {self.provider}")
             raise ValueError(f"Unsupported embedding provider: {self.provider}")
@@ -342,9 +413,18 @@ class EmbeddingService:
                     return embeddings_list[0] if embeddings_list and isinstance(embeddings_list, list) and embeddings_list[0] else embeddings_list
                 else:
                     return embeddings_list
-            else:
-                logger.error(f"Embed called with unsupported provider: {self.provider}")
-                raise RuntimeError(f"Unsupported embedding provider: {self.provider}")
+            elif self.provider == "ollama":
+                if not self.ollama_client:
+                    logger.critical("Ollama client not properly initialized.")
+                    raise RuntimeError("Ollama client not initialized.")
+                
+                embeddings = []
+                for text in texts:
+                    response = self.ollama_client.embeddings(model=OLLAMA_MODEL, prompt=text)
+                    embeddings.append(response["embedding"])
+                
+                logger.debug(f"Ollama embedding(s) received. Count: {len(embeddings)}, Dimension: {len(embeddings[0]) if embeddings else 'N/A'}")
+                return embeddings[0] if single_input else embeddings
             
         except OpenAIError as e:
             logger.error(f"OpenAI API error during embedding: {e}", exc_info=True)

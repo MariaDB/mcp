@@ -42,5 +42,17 @@ class TestEmbeddingServiceGemini(unittest.TestCase):
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 768)
 
+class TestEmbeddingServiceOllama(unittest.TestCase):
+    @patch("embeddings.EMBEDDING_PROVIDER", "ollama")
+    def test_ollama_init_and_embed(self):
+        service = EmbeddingService()
+        self.assertEqual(service.provider, "ollama")
+        self.assertIn("nomic-embed-text", service.allowed_models)
+        self.assertEqual(service.default_model, "nomic-embed-text")
+        # Test embed
+        result = asyncio.run(service.embed("hello world"))
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 768)
+
 if __name__ == "__main__":
     unittest.main()
