@@ -1007,6 +1007,29 @@ class MariaDBServer:
         finally:
             await self.close_pool()
 
+    # Sync server start logic
+    def start(self):
+        exit_code = 0
+
+        try:
+            # 2. Use anyio.run to manage the event loop and call the main async server logic
+            anyio.run(
+                partial(self.run_async_server,
+                        transport=args.transport,
+                        host=args.host,
+                        port=args.port,
+                        path=args.path)
+            )
+            logger.info("Server finished gracefully.")
+
+        except KeyboardInterrupt:
+            logger.info("Server execution interrupted by user.")
+        except Exception as e:
+            logger.critical(f"Server failed to start or crashed: {e}", exc_info=True)
+            exit_code = 1
+        finally:
+            logger.info(f"Server exiting with code {exit_code}.")
+
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
@@ -1023,23 +1046,4 @@ if __name__ == "__main__":
 
     # 1. Create the server instance
     server = MariaDBServer()
-    exit_code = 0
-
-    try:
-        # 2. Use anyio.run to manage the event loop and call the main async server logic
-        anyio.run(
-            partial(server.run_async_server, 
-                    transport=args.transport, 
-                    host=args.host, 
-                    port=args.port, 
-                    path=args.path)
-        )
-        logger.info("Server finished gracefully.")
-
-    except KeyboardInterrupt:
-         logger.info("Server execution interrupted by user.")
-    except Exception as e:
-         logger.critical(f"Server failed to start or crashed: {e}", exc_info=True)
-         exit_code = 1
-    finally:
-        logger.info(f"Server exiting with code {exit_code}.")
+    server.start()
