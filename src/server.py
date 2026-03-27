@@ -1008,17 +1008,17 @@ class MariaDBServer:
             await self.close_pool()
 
     # Sync server start logic
-    def start(self):
+    def start(self, transport="stdio", host="127.0.0.1", port=9001, path="/mcp"):
         exit_code = 0
 
         try:
             # 2. Use anyio.run to manage the event loop and call the main async server logic
             anyio.run(
                 partial(self.run_async_server,
-                        transport=args.transport,
-                        host=args.host,
-                        port=args.port,
-                        path=args.path)
+                        transport=transport,
+                        host=host,
+                        port=port,
+                        path=path)
             )
             logger.info("Server finished gracefully.")
 
@@ -1046,4 +1046,4 @@ if __name__ == "__main__":
 
     # 1. Create the server instance
     server = MariaDBServer()
-    server.start()
+    server.start(args.transport, args.host, args.port, args.path)
