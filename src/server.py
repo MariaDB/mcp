@@ -1031,8 +1031,7 @@ class MariaDBServer:
             logger.info(f"Server exiting with code {exit_code}.")
 
 
-# --- Main Execution Block ---
-if __name__ == "__main__":
+def get_arg_parser():
     parser = argparse.ArgumentParser(description="MariaDB MCP Server")
     parser.add_argument('--transport', type=str, default='stdio', choices=['stdio', 'sse', 'http'],
                         help='MCP transport protocol (stdio, sse, or http)')
@@ -1042,7 +1041,12 @@ if __name__ == "__main__":
                         help='Port for SSE or HTTP transport')
     parser.add_argument('--path', type=str, default='/mcp',
                         help='Path for HTTP transport (default: /mcp)')
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+# --- Main Execution Block ---
+if __name__ == "__main__":
+    args = get_arg_parser()
 
     # 1. Create the server instance
     server = MariaDBServer()
