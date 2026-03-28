@@ -1007,9 +1007,31 @@ class MariaDBServer:
         finally:
             await self.close_pool()
 
+    # Sync server start logic
+    def start(self, transport="stdio", host="127.0.0.1", port=9001, path="/mcp"):
+        exit_code = 0
 
-# --- Main Execution Block ---
-if __name__ == "__main__":
+        try:
+            # 2. Use anyio.run to manage the event loop and call the main async server logic
+            anyio.run(
+                partial(self.run_async_server,
+                        transport=transport,
+                        host=host,
+                        port=port,
+                        path=path)
+            )
+            logger.info("Server finished gracefully.")
+
+        except KeyboardInterrupt:
+            logger.info("Server execution interrupted by user.")
+        except Exception as e:
+            logger.critical(f"Server failed to start or crashed: {e}", exc_info=True)
+            exit_code = 1
+        finally:
+            logger.info(f"Server exiting with code {exit_code}.")
+
+
+def get_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MariaDB MCP Server")
     parser.add_argument('--transport', type=str, default='stdio', choices=['stdio', 'sse', 'http'],
                         help='MCP transport protocol (stdio, sse, or http)')
@@ -1019,27 +1041,13 @@ if __name__ == "__main__":
                         help='Port for SSE or HTTP transport')
     parser.add_argument('--path', type=str, default='/mcp',
                         help='Path for HTTP transport (default: /mcp)')
-    args = parser.parse_args()
+    return parser
+
+
+# --- Main Execution Block ---
+if __name__ == "__main__":
+    args = get_arg_parser().parse_args()
 
     # 1. Create the server instance
     server = MariaDBServer()
-    exit_code = 0
-
-    try:
-        # 2. Use anyio.run to manage the event loop and call the main async server logic
-        anyio.run(
-            partial(server.run_async_server, 
-                    transport=args.transport, 
-                    host=args.host, 
-                    port=args.port, 
-                    path=args.path)
-        )
-        logger.info("Server finished gracefully.")
-
-    except KeyboardInterrupt:
-         logger.info("Server execution interrupted by user.")
-    except Exception as e:
-         logger.critical(f"Server failed to start or crashed: {e}", exc_info=True)
-         exit_code = 1
-    finally:
-        logger.info(f"Server exiting with code {exit_code}.")
+    server.start(args.transport, args.host, args.port, args.path)
