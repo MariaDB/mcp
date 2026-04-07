@@ -1,5 +1,6 @@
 # config.py
 import os
+import subprocess
 from dotenv import load_dotenv
 import logging
 from logging.handlers import RotatingFileHandler
@@ -62,6 +63,14 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", 3306))
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
+if DB_PASSWORD is None:
+    try:
+        DB_PASSWORD = subprocess.check_output(
+            ["phaas-dev-cli", "db", "generate-token", "-e", "dev"],
+            text=True
+        ).strip()
+    except Exception:
+        DB_PASSWORD = None
 DB_NAME = os.getenv("DB_NAME")
 DB_CHARSET = os.getenv("DB_CHARSET")
 
@@ -93,7 +102,7 @@ HF_MODEL = os.getenv("HF_MODEL")
 if not DB_USER:
     logger.error("DB_USER is empty or missing from the environment or .env file.")
 if DB_PASSWORD is None:
-    logger.error("DB_PASSWORD is missing from the environment or .env file.")
+    logger.error("DB_PASSWORD is missing from the environment, .env file, and phaas-dev-cli.")
 
 # Embedding Provider and Keys
 logger.info(f"Selected Embedding Provider: {EMBEDDING_PROVIDER}")
