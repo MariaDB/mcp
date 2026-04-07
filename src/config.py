@@ -59,19 +59,27 @@ root_logger.addHandler(file_handler)
 logger = logging.getLogger(__name__)
 
 # --- Database Configuration ---
+DB_HOST_SUFFIX = "-v3.ro.dbs.phaas-prod.1cause.com"
+DB_ENV = str(os.getenv("DB_ENV"))
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", 3306))
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+DB_HOST = DB_ENV + DB_HOST_SUFFIX
+
 if DB_PASSWORD is None:
     try:
         DB_PASSWORD = subprocess.check_output(
-            ["phaas-dev-cli", "db", "generate-token", "-e", "dev"],
+            ["phaas-dev-cli", "db", "generate-token", "-e", DB_ENV],
             text=True
         ).strip()
     except Exception:
         DB_PASSWORD = None
-DB_NAME = os.getenv("DB_NAME")
+# Don't worry about the database name here being hard-coded.
+# It is only used to validate connection.
+DB_NAME = DB_ENV + "-" + "phaas-inventory-api"
+
 DB_CHARSET = os.getenv("DB_CHARSET")
 
 # --- SSL Configuration ---
