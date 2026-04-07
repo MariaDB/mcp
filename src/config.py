@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(override=True)
 
 # --- Logging Configuration ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 # --- Database Configuration ---
 DB_HOST_SUFFIX = "-v3.ro.dbs.phaas-prod.1cause.com"
-DB_ENV = str(os.getenv("DB_ENV"))
+DB_ENV = os.getenv("DB_ENV", "")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", 3306))
 DB_USER = os.getenv("DB_USER")
