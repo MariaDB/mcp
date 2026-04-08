@@ -44,6 +44,11 @@ I'm seeing an error in this payment processing path when org_payment_consent is 
 This code skips sending a welcome message if the guest already has a message_history entry. Use /db to find guests created in the last 24 hours who did not receive a welcome message, and check whether they all have a pre-existing message_history row.
 ```
 
+If you have enabled the Jira connection:
+```
+Check Jira ticket ABC-1234. Gather additional relevant information to help debug the issue by using /db for the affected entities (org, event, guests, etc.).
+```
+
 ## /db-refresh-schema
 
 Rebuilds `~/.claude/db-schema.json` by querying `information_schema` for all databases and tables. Run this when new services are deployed or tables are added.
@@ -52,7 +57,7 @@ The manifest stores bare base names (e.g. `phaas-ticket-api`) without an environ
 
 **Customize the manifest after generating:**
 
-- `aliases` — teach Claude that "event" means the `virtual_event` table, "users" means `guests`, etc.
+- `aliases` — teach Claude that "event" means the `virtual_event` table, etc.
 - `collision_defaults` — resolve ambiguity for tables that exist in multiple databases. For example, `"raffle ticket"` maps to `phaas-raffle-api`.`ticket` rather than `phaas-ticket-api`.`ticket`.
 
 The manifest is generated automatically on the first `/db` invocation if it doesn't exist.
