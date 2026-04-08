@@ -239,38 +239,63 @@ For production use, you should create a dedicated database user with minimal pri
 
 ### Requirements
 
-- **Python 3.11** (see `.python-version`)
-- **uv** (dependency manager; [install instructions](https://github.com/astral-sh/uv))
+- **uv** (manages Python and dependencies; see install instructions below)
 - MariaDB server (local or remote)
+
+> **Note:** You do not need to install Python 3.11 manually. `uv` will automatically download and manage the correct Python version (3.11) as specified in `.python-version`.
 
 ### Steps
 
 1. **Clone the repository**
-2. **Install `uv`** (if not already):
    ```bash
-   pip install uv
+   git clone https://github.com/BidPal/maria-mcp.git
+   cd maria-mcp
    ```
-3. **Install dependencies**
+
+2. **Install `uv`** (if not already):
+
+   **macOS / Linux:**
    ```bash
-   uv lock
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source $HOME/.local/bin/env
+   ```
+
+   **Windows:**
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+   Verify the installation:
+   ```bash
+   uv --version
+   ```
+
+3. **Install dependencies**
+
+   From the project root, run:
+   ```bash
    uv sync
    ```
+
+   This will automatically install Python 3.11 (if not already available) and all project dependencies into a local virtual environment. This may take a few minutes the first time due to larger dependencies like `sentence-transformers`.
+
 4. **Create `.env`** in the project root (see [Configuration](#configuration--environment-variables))
+
 5. **Run the server**
-   
+
    **Standard Input/Output (default):**
    ```bash
-   uv run server.py
+   uv run src/server.py
    ```
-   
+
    **SSE Transport:**
    ```bash
-   uv run server.py --transport sse --host 127.0.0.1 --port 9001
+   uv run src/server.py --transport sse --host 127.0.0.1 --port 9001
    ```
-   
+
    **HTTP Transport (streamable HTTP):**
    ```bash
-   uv run server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
+   uv run src/server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
    ```
 
 ---
