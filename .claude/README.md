@@ -1,4 +1,4 @@
-To install skills, copy the files from `.claude/skills/` to `~/.claude/skills/`. They can then be triggered as slash commands in Claude Code.
+To install skills, copy the directories from `.claude/skills/` to `~/.claude/skills/`. They can be triggered as slash commands in Claude Code.
 
 ## /db
 
@@ -12,6 +12,7 @@ Claude may ask your permission to start the MCP server, stop the MCP server, que
 /db how many guests have no ticket?
 /db staging how many guests have no ticket?
 /db production how many BPEs in datalake need to be synced?
+/db dev how many LMS courses have we synced from Absorb compared to /db production?
 ```
 
 Valid environments: `dev`, `staging`, `production`.

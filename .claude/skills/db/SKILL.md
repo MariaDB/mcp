@@ -1,3 +1,9 @@
+---
+name: db
+description: Execute a natural-language query against the local MariaDB MCP server. Use when the user invokes /db with an optional environment prefix (dev/staging/production) followed by a natural-language query.
+argument-hint: "[dev|staging|production] <natural language query>"
+---
+
 # DB Query
 
 Execute a natural-language query against the local MariaDB MCP server, automatically resolving which database(s) each table lives in.
@@ -26,8 +32,15 @@ Runs at `http://127.0.0.1:9001/mcp`. Start it at the beginning of every `/db` in
 
 **Start** (pass `DB_ENV` so the server connects to the right environment — env vars take precedence over `.env`):
 ```bash
-DB_ENV={ENV} uv run --directory /Users/treeves/go/src/github.com/BidPal/maria-mcp src/server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp &>/dev/null &
-sleep 2
+_MCP_LOG=$(mktemp /tmp/maria-mcp-XXXXXX.log)
+DB_ENV={ENV} uv run --directory /Users/treeves/go/src/github.com/BidPal/maria-mcp src/server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp &>"$_MCP_LOG" &
+_MCP_PID=$!
+for _i in $(seq 1 30); do
+  grep -q "Application startup complete" "$_MCP_LOG" 2>/dev/null && break
+  kill -0 "$_MCP_PID" 2>/dev/null || { echo "MCP server died; log:"; cat "$_MCP_LOG"; exit 1; }
+  sleep 0.5
+done
+rm -f "$_MCP_LOG"
 ```
 
 **Stop (after all queries are complete):**
@@ -145,3 +158,6 @@ If multiple queries are needed in sequence (e.g. a discovery query followed by t
 ## Step 4 — Display results
 
 Print results clearly. If the query spanned multiple databases, note which ones were involved.
+
+
+ARGUMENTS: $ARGUMENTS
