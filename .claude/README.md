@@ -4,7 +4,7 @@ To install skills, copy the files from `.claude/skills/` to `~/.claude/skills/`.
 
 Executes natural-language queries against the local MariaDB MCP server. It automatically resolves which database(s) each table lives in using `~/.claude/db-schema.json`, writes fully-qualified SQL, asks for confirmation before running, and displays results.
 
-Claude will ask your permission to start the MCP server, stop the MCP server, query the DB, and possibly some additional things like using python to format a pretty output. Ensure you know what is happening for each permission ask.
+Claude may ask your permission to start the MCP server, stop the MCP server, query the DB, use a bash command, or possibly some additional things like using python to format a pretty output. Ensure you know what is happening for each permission ask.
 
 **Environment** — defaults to `dev`. Prefix with the environment name to target another:
 
