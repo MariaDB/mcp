@@ -1,4 +1,4 @@
-To install skills, copy the directories from `.claude/skills/` to `~/.claude/skills/`. They can be triggered as slash commands in Claude Code.
+To install skills, copy the directories from `.claude/skills/` to `~/.claude/skills/`. They can be triggered as slash commands in Claude Code. They do require python.
 
 ## /db
 

@@ -30,63 +30,28 @@ When resolving database names from `db-schema.json`, the stored names are bare b
 
 Runs at `http://127.0.0.1:9001/mcp`. Start it at the beginning of every `/db` invocation and stop it when done. Stopping and restarting is also how you refresh an expired token.
 
-**Start** (pass `DB_ENV` so the server connects to the right environment — env vars take precedence over `.env`):
+**Start** (pass `ENV` so the server connects to the right environment):
 ```bash
-_MCP_LOG=$(mktemp /tmp/maria-mcp-XXXXXX.log)
-DB_ENV={ENV} uv run --directory /Users/treeves/go/src/github.com/BidPal/maria-mcp src/server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp &>"$_MCP_LOG" &
-_MCP_PID=$!
-for _i in $(seq 1 30); do
-  grep -q "Application startup complete" "$_MCP_LOG" 2>/dev/null && break
-  kill -0 "$_MCP_PID" 2>/dev/null || { echo "MCP server died; log:"; cat "$_MCP_LOG"; exit 1; }
-  sleep 0.5
-done
-rm -f "$_MCP_LOG"
+python3 ~/.claude/skills/db/mcp_start.py {ENV}
 ```
 
 **Stop (after all queries are complete):**
 ```bash
-kill -INT $(lsof -ti:9001) 2>/dev/null || true
+python3 ~/.claude/skills/db/mcp_stop.py
 ```
 
 If any query returns a 1045 Access Denied error mid-session, stop the server and start it again before retrying.
 
 ## Bash pattern
 
-Use this for every query. `cut` is used instead of `awk` to extract the session ID (avoid `$N`-style variable substitution issues). Build the JSON payload in Python to safely handle arbitrary SQL strings.
+Use this for every query. SQL is passed via heredoc to `mcp_query.py`.
 
 ```bash
-SESSION_ID=$(curl -s -D - http://127.0.0.1:9001/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"claude","version":"1.0"}}}' \
-  2>/dev/null | grep -i "mcp-session-id:" | cut -d' ' -f2 | tr -d '\r')
+SESSION_ID=$(python3 ~/.claude/skills/db/mcp_session.py)
 
-python3 -c "
-import subprocess, json, sys
-
-session_id = '$SESSION_ID'
-sql = '''TARGET_SQL'''
-
-payload = json.dumps({
-    'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
-    'params': {'name': 'execute_sql', 'arguments': {'database_name': 'information_schema', 'sql_query': sql}}
-})
-result = subprocess.check_output([
-    'curl', '-s', 'http://127.0.0.1:9001/mcp',
-    '-H', 'Content-Type: application/json',
-    '-H', 'Accept: application/json, text/event-stream',
-    '-H', f'mcp-session-id: {session_id}',
-    '-d', payload
-]).decode()
-try:
-    d = json.loads(result.split('data: ', 1)[1])
-    if 'structuredContent' in d.get('result', {}):
-        for r in d['result']['structuredContent']['result']: print(r)
-    else:
-        print('ERROR:', d['result']['content'][0]['text'], file=sys.stderr)
-except Exception as e:
-    print('PARSE ERROR:', e, result[:300], file=sys.stderr)
-"
+python3 ~/.claude/skills/db/mcp_query.py "$SESSION_ID" <<'EOF'
+TARGET_SQL
+EOF
 ```
 
 Reuse the same `$SESSION_ID` for multiple queries in one invocation — no need to re-handshake between queries.

@@ -12,52 +12,17 @@ Rebuild `~/.claude/db-schema.json` by querying `information_schema` for all user
 ### 0. Start the MCP server
 
 ```bash
-_MCP_LOG=$(mktemp /tmp/maria-mcp-XXXXXX.log)
-uv run --directory /Users/treeves/go/src/github.com/BidPal/maria-mcp src/server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp &>"$_MCP_LOG" &
-_MCP_PID=$!
-for _i in $(seq 1 30); do
-  grep -q "Application startup complete" "$_MCP_LOG" 2>/dev/null && break
-  kill -0 "$_MCP_PID" 2>/dev/null || { echo "MCP server died; log:"; cat "$_MCP_LOG"; exit 1; }
-  sleep 0.5
-done
-rm -f "$_MCP_LOG"
+python3 ~/.claude/skills/db/mcp_start.py
 ```
 
 ### 1. Query all tables
 
 ```bash
-SESSION_ID=$(curl -s -D - http://127.0.0.1:9001/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"claude","version":"1.0"}}}' \
-  2>/dev/null | grep -i "mcp-session-id:" | cut -d' ' -f2 | tr -d '\r')
+SESSION_ID=$(python3 ~/.claude/skills/db/mcp_session.py)
 
-python3 -c "
-import subprocess, json, sys
-
-session_id = '$SESSION_ID'
-sql = '''SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema','mysql','performance_schema','sys') ORDER BY table_schema, table_name'''
-
-payload = json.dumps({
-    'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
-    'params': {'name': 'execute_sql', 'arguments': {'database_name': 'information_schema', 'sql_query': sql}}
-})
-result = subprocess.check_output([
-    'curl', '-s', 'http://127.0.0.1:9001/mcp',
-    '-H', 'Content-Type: application/json',
-    '-H', 'Accept: application/json, text/event-stream',
-    '-H', f'mcp-session-id: {session_id}',
-    '-d', payload
-]).decode()
-try:
-    d = json.loads(result.split('data: ', 1)[1])
-    if 'structuredContent' in d.get('result', {}):
-        for r in d['result']['structuredContent']['result']: print(r)
-    else:
-        print('ERROR:', d['result']['content'][0]['text'], file=sys.stderr)
-except Exception as e:
-    print('PARSE ERROR:', e, result[:300], file=sys.stderr)
-"
+python3 ~/.claude/skills/db/mcp_query.py "$SESSION_ID" <<'EOF'
+SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema','mysql','performance_schema','sys') ORDER BY table_schema, table_name
+EOF
 ```
 
 ### 2. Build and write the manifest
@@ -94,7 +59,7 @@ Write to `~/.claude/db-schema.json` using the Write tool.
 ### 3. Stop the MCP server
 
 ```bash
-kill -INT $(lsof -ti:9001) 2>/dev/null || true
+python3 ~/.claude/skills/db/mcp_stop.py
 ```
 
 ### 4. Report
