@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "mariadb-server"
-version = "0.2.4"
+name = "mariadb-mcp"
+version = "0.2.5"
 description = "MariaDB MCP Server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,3 +17,10 @@ dependencies = [
     "sentence-transformers>=4.1.0",
     "tokenizers==0.21.2",
 ]
+
+[project.scripts]
+mariadb-mcp = "server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["server", "config", "custom_connection", "embeddings", "main"]

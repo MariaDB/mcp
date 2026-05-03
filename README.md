@@ -243,35 +243,58 @@ For production use, you should create a dedicated database user with minimal pri
 - **uv** (dependency manager; [install instructions](https://github.com/astral-sh/uv))
 - MariaDB server (local or remote)
 
-### Steps
 
-1. **Clone the repository**
-2. **Install `uv`** (if not already):
-   ```bash
-   pip install uv
-   ```
-3. **Install dependencies**
-   ```bash
-   uv lock
-   uv sync
-   ```
-4. **Create `.env`** in the project root (see [Configuration](#configuration--environment-variables))
-5. **Run the server**
-   
-   **Standard Input/Output (default):**
-   ```bash
-   uv run server.py
-   ```
-   
-   **SSE Transport:**
-   ```bash
-   uv run server.py --transport sse --host 127.0.0.1 --port 9001
-   ```
-   
-   **HTTP Transport (streamable HTTP):**
-   ```bash
-   uv run server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
-   ```
+### Add MCP to your agent CLI, e.g. Codex
+
+```bash
+codex mcp add mariadb-mcp --env DB_HOST=localhost --env DB_PORT=3306 --env DB_USER=root --env DB_PASSWORD=1234 --env DB_NAME=myprojecttestdatabase --env MCP_READ_ONLY=true -- uvx mariadb-mcp
+```
+
+Example Codex config:
+
+```toml
+[mcp_servers.mariadb-mcp]
+command = "uvx"
+args = ["mariadb-mcp"]
+env = { DB_HOST = "localhost", DB_PORT = "3306", DB_USER = "root", DB_PASSWORD = "1234", DB_NAME = "mytestdb", MCP_READ_ONLY = "true" }
+```
+
+Or as ``mcp.json``
+```json
+{
+  "mcpServers": {
+    "MariaDB_Server": {
+      "command": "uvx",
+      "args": [
+        "mariadb-mcp"
+        ],
+        "envFile": "path/to/.env"      
+    }
+  }
+}
+```
+
+
+### Run from a local checkout (development)
+
+```bash
+git clone https://github.com/VIEWVIEWVIEW/mariadb-mcp
+cd /path/to/mariadb-mcp
+# configure environment variables (see Configuration section above)
+uv lock
+uv sync
+
+# create .env file in project root
+
+# starts stdio mode
+uv run server.py
+
+# SSE Transport:
+uv run server.py --transport sse --host 127.0.0.1 --port 9001
+
+# HTTP Transport (streamable HTTP):
+uv run server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
+```
 
 ---
 
@@ -339,13 +362,10 @@ For production use, you should create a dedicated database user with minimal pri
 ```json
 {
   "mcpServers": {
-    "MariaDB_Server": {
-      "command": "uv",
+    "mariadb-mcp": {
+      "command": "uvx",
       "args": [
-        "--directory",
-        "path/to/mariadb-mcp-server/",
-        "run",
-        "server.py"
+        "mariadb-mcp"
         ],
         "envFile": "path/to/mcp-server-mariadb-vector/.env"      
     }
@@ -429,3 +449,5 @@ For production use, you should create a dedicated database user with minimal pri
 - Tests are located in the `src/tests/` directory.
 - See `src/tests/README.md` for an overview.
 - Tests cover both standard SQL and vector/embedding tool operations.
+
+---
