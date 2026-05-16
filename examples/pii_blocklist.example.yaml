@@ -1,0 +1,45 @@
+# Example PII blocklist for the MariaDB MCP server.
+#
+# Activate by setting these two environment variables for the MCP server
+# process:
+#
+#   PII_FILTER_ENABLED=true
+#   PII_CONFIG_PATH=/absolute/path/to/your/pii_blocklist.yaml
+#
+# When the filter is enabled:
+#   - blocked columns are stripped from get_table_schema responses
+#   - fully-blocked tables (value "*") are hidden from list_tables
+#   - execute_sql refuses queries that would PROJECT a blocked column,
+#     including SELECT * over a table that has any blocked column
+#   - blocked columns are stripped from execute_sql result rows as a safety
+#     net (so the AI client never sees PII values even if a pre-flight check
+#     is bypassed by an unparseable query)
+#
+# Blocked columns are still allowed in WHERE / JOIN ON / GROUP BY / ORDER BY,
+# because they do not produce PII in the response. The goal is to keep PII
+# values from reaching the AI -- not to prevent a trusted human from filtering
+# on them.
+#
+# Format
+# ------
+# Top-level keys are database names. Each value is a dict of table -> column
+# list, or the literal string "*" to mark "every column of this table is PII."
+# Names are matched case-insensitively.
+
+acme_corp:
+  customers:
+    - email
+    - phone
+    - date_of_birth
+    - real_name
+  payment_methods:
+    - card_number
+    - cvv
+    - billing_address
+  # Use "*" to block every column. The table also disappears from list_tables.
+  audit_log_pii: "*"
+
+acme_corp_reporting:
+  user_events:
+    - ip_address
+    - user_agent

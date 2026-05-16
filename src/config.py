@@ -78,6 +78,16 @@ DB_SSL_VERIFY_IDENTITY = os.getenv("DB_SSL_VERIFY_IDENTITY", "false").lower() ==
 MCP_READ_ONLY = os.getenv("MCP_READ_ONLY", "true").lower() == "true"
 MCP_MAX_POOL_SIZE = int(os.getenv("MCP_MAX_POOL_SIZE", 10))
 
+# --- PII Filter Configuration ---
+# When enabled, blocked columns are stripped from schema responses AND from
+# result rows. The goal is to prevent the AI client from seeing PII values;
+# end users with direct DB access are out of scope.
+# When disabled, every PII filter function short-circuits in its first line —
+# no YAML load, no SQL parsing, no per-row work.
+PII_FILTER_ENABLED = os.getenv("PII_FILTER_ENABLED", "false").lower() == "true"
+# Absolute path to the YAML blocklist file. Required when PII_FILTER_ENABLED=true.
+PII_CONFIG_PATH = os.getenv("PII_CONFIG_PATH")
+
 # --- Embedding Configuration ---
 # Provider selection ('openai' or 'gemini' or 'huggingface')
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")
@@ -114,4 +124,7 @@ else:
     logger.info(f"No EMBEDDING_PROVIDER selected or it is set to None. Disabling embedding features.")
 
 logger.info(f"Read-only mode: {MCP_READ_ONLY}")
+logger.info(f"PII filter enabled: {PII_FILTER_ENABLED}")
+if PII_FILTER_ENABLED and not PII_CONFIG_PATH:
+    logger.error("PII_FILTER_ENABLED=true but PII_CONFIG_PATH is not set. The filter will fail closed on first use.")
 logger.info(f"Logging to console and to file: {LOG_FILE_PATH} (Level: {LOG_LEVEL}, MaxSize: {LOG_MAX_BYTES}B, Backups: {LOG_BACKUP_COUNT})")

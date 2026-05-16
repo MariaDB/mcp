@@ -1,8 +1,7 @@
 [project]
-name = "mariadb-server"
+name = "mariadb-mcp"
 version = "0.2.3"
 description = "MariaDB MCP Server"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "asyncmy>=0.2.10",
@@ -10,6 +9,9 @@ dependencies = [
     "google-genai>=1.15.0",
     "openai>=1.78.1",
     "python-dotenv>=1.1.0",
+    "pyyaml>=6.0",
     "sentence-transformers>=4.1.0",
+    "sqlglot>=25.0",
+    "sshtunnel>=0.4.0",
     "tokenizers==0.21.2",
 ]

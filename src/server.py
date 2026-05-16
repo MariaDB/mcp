@@ -24,6 +24,9 @@ from fastmcp import FastMCP, Context
 # Import custom connection pool that disables MULTI_STATEMENTS
 from custom_connection import create_safe_pool
 
+# PII filter (no-op when PII_FILTER_ENABLED is false)
+import pii_filter
+
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -328,6 +331,8 @@ class MariaDBServer:
         try:
             results = await self._execute_query(sql, database=database_name)
             table_list = [list(row.values())[0] for row in results if row]
+            # Drop fully-blocked tables (PII filter, no-op when disabled).
+            table_list = pii_filter.filter_table_list(database_name, table_list)
             logger.info(f"TOOL END: list_tables completed. Tables found: {len(table_list)}.")
             return table_list
         except Exception as e:
@@ -370,6 +375,8 @@ class MariaDBServer:
                         'default': row.get('Default'),
                         'extra': row.get('Extra')
                     }
+            # Strip blocked columns (PII filter, no-op when disabled).
+            schema_info = pii_filter.filter_schema(database_name, table_name, schema_info)
             logger.info(f"TOOL END: get_table_schema completed. Columns found: {len(schema_info)}. Keys: {list(schema_info.keys())}")
             return schema_info
         except FileNotFoundError as e:
@@ -459,9 +466,16 @@ class MariaDBServer:
         if database_name and not database_name.isidentifier():
             logger.warning(f"TOOL WARNING: execute_sql called with invalid database_name: {database_name}")
             raise ValueError(f"Invalid database name provided: {database_name}")
+        # Pre-flight PII check (no-op when disabled). Raises PIIBlockedError
+        # if the query would project a blocked column; the message tells the
+        # caller exactly which column to remove so they can rewrite.
+        pii_filter.check_query(sql_query, default_db=database_name)
         param_tuple = tuple(parameters) if parameters is not None else None
         try:
             results = await self._execute_query(sql_query, params=param_tuple, database=database_name)
+            # Post-filter result rows (the actual security guarantee).
+            # No-op when disabled; conservative drop when SQL is unparseable.
+            results = pii_filter.filter_rows(results, database=database_name, sql=sql_query)
             logger.info(f"TOOL END: execute_sql completed. Rows returned: {len(results)}.")
             return results
         except Exception as e:

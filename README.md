@@ -11,6 +11,7 @@ The MCP MariaDB Server provides a Model Context Protocol (MCP) interface for man
 - [Available Tools](#available-tools)
 - [Embeddings & Vector Store](#embeddings--vector-store)
 - [Configuration & Environment Variables](#configuration--environment-variables)
+- [PII Filter (opt-in)](#pii-filter-opt-in)
 - [Installation & Setup](#installation--setup)
 - [Usage Examples](#usage-examples)
 - [Integration - Claude desktop/Cursor/Windsurf](#integration---claude-desktopcursorwindsurf)
@@ -152,6 +153,8 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `HF_MODEL`             | Open models from Huggingface                           | Yes (if EMBEDDING_PROVIDER=huggingface) | |
 | `ALLOWED_ORIGINS`      | Comma-separated list of allowed origins                | No       | Long list of allowed origins corresponding to local use of the server |
 | `ALLOWED_HOSTS`        | Comma-separated list of allowed hosts                  | No       | `localhost,127.0.0.1` |
+| `PII_FILTER_ENABLED`   | Strip PII columns from tool responses (`true`/`false`) | No       | `false`      |
+| `PII_CONFIG_PATH`      | Absolute path to PII blocklist YAML                    | Yes (if `PII_FILTER_ENABLED=true`) | |
 
 Note that if using 'http' or 'sse' as the transport, configuring authentication is important for security if you allow connections outside of localhost. Because different organizations use different authentication methods, the server does not provide a default authentication method. You will need to configure your own authentication method. Thankfully FastMCP provides a simple way to do this starting with version 2.12.1. See the [FastMCP documentation](https://gofastmcp.com/servers/auth/authentication#environment-configuration) for more information. We have provided an example configuration below.
 
@@ -226,6 +229,70 @@ export FASTMCP_SERVER_AUTH=fastmcp.server.auth.providers.google.GoogleProvider
 export FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID="123456.apps.googleusercontent.com"
 export FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET="GOCSPX-..."
 ```
+
+---
+
+## PII Filter (opt-in)
+
+The server can optionally strip Personally Identifiable Information (PII)
+columns from tool responses before they leave the MCP server. The goal is to
+**prevent an AI client from receiving PII values** — end users with direct
+database access are explicitly out of scope (they are trusted to handle PII
+appropriately).
+
+### Behavior
+
+When `PII_FILTER_ENABLED=true` and `PII_CONFIG_PATH` points at a YAML
+blocklist:
+
+- **`get_table_schema` / `get_table_schema_with_relations`**: blocked columns
+  are stripped from the schema response so the AI never learns their names.
+- **`list_tables`**: tables marked fully-PII (`"*"`) are hidden.
+- **`execute_sql`**:
+  - **Pre-flight check** refuses queries that would project a blocked column,
+    including `SELECT *` over a table with any blocked column. The error
+    message names the blocked column so the AI can rewrite the query.
+  - **Post-filter** strips blocked columns from result rows. This runs
+    regardless of the pre-flight outcome and is the actual security
+    guarantee — even an unparseable query that slips past the pre-flight
+    check will have blocked column names dropped from the returned rows.
+
+Blocked columns are **still allowed in `WHERE`, `JOIN ON`, `GROUP BY`,
+`ORDER BY`, and `HAVING`**. These do not produce PII values in the response,
+so a query like `SELECT id FROM users WHERE email = ?` is permitted — the
+result rows contain no PII.
+
+### When disabled
+
+When `PII_FILTER_ENABLED` is unset or `false`, every filter function
+short-circuits in its first line. No YAML load, no SQL parsing, no per-row
+work. The performance overhead in this state is a single boolean check per
+tool call.
+
+### Blocklist YAML format
+
+See [`examples/pii_blocklist.example.yaml`](examples/pii_blocklist.example.yaml)
+for a complete example. The schema is:
+
+```yaml
+database_name:
+  table_name:
+    - column_name
+    - other_column
+  another_table: "*"   # entire table is PII; hidden from list_tables
+```
+
+Names are matched case-insensitively.
+
+### Recommended setup
+
+- Keep the blocklist YAML **outside this repository** (it enumerates your
+  sensitive columns). A private repo or restricted-share cloud-drive folder
+  both work.
+- Use a per-environment env file: enable the filter in production, leave it
+  off in staging or local development.
+- The YAML is loaded once per process and cached. Restart the MCP server to
+  pick up blocklist changes.
 
 ---
 
