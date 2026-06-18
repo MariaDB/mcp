@@ -220,8 +220,16 @@ class MariaDBServer:
     async def _execute_query(self, sql: str, params: Optional[tuple] = None, database: Optional[str] = None) -> List[Dict[str, Any]]:
         """Helper function to execute SELECT queries using the pool."""
         if self.pool is None:
-            logger.error("Connection pool is not initialized.")
-            raise RuntimeError("Database connection pool not available.")
+            # Lazy (re)connect: the DB may sit behind a tunnel that came up after
+            # server start (or one that dropped and was re-established). Surface a
+            # clear, actionable error if it's still unreachable.
+            try:
+                await self.initialize_pool()
+            except Exception as e:
+                raise RuntimeError(
+                    f"Database not reachable at {DB_HOST}:{DB_PORT} ({e}). "
+                    "If this DB is behind a tunnel, ensure the tunnel is up, then retry."
+                ) from e
 
         allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
 
@@ -317,7 +325,14 @@ class MariaDBServer:
         except AsyncMyError as e:
             conn_state = f"Connection: {'acquired' if conn else 'not acquired'}"
             logger.error(f"Database error executing query ({conn_state}): {e}", exc_info=True)
-            # Check for specific connection-related errors if possible
+            # Connection-level failure (tunnel dropped, server gone away, or the
+            # pool couldn't hand out a connection): discard the pool so the next
+            # query rebuilds it and auto-reconnects. The dropped pool's sockets
+            # are reaped by asyncmy on garbage collection.
+            errno = e.args[0] if e.args else None
+            if conn is None or errno in (2002, 2003, 2006, 2013):
+                logger.warning("Resetting connection pool after connection-level error; next query will reconnect.")
+                self.pool = None
             raise RuntimeError(f"Database error: {e}") from e
         except PermissionError as e:
              logger.warning(f"Permission denied: {e}")
@@ -932,11 +947,12 @@ class MariaDBServer:
             
     # --- Tool Registration (Synchronous) ---
     def register_tools(self):
-        """Registers the class methods as MCP tools using the instance. This is synchronous."""
-        if self.pool is None:
-             logger.error("Cannot register tools: Database pool is not initialized.")
-             raise RuntimeError("Database pool must be initialized before registering tools.")
+        """Registers the class methods as MCP tools using the instance. This is synchronous.
 
+        Tool registration must NOT depend on a live pool: the DB may be behind a
+        tunnel that isn't up at server start. Tools are registered unconditionally
+        so the server comes up connected; the pool is established lazily on first use.
+        """
         @self.mcp.tool
         async def list_databases() -> List[str]:
             """Lists all accessible databases on the connected MariaDB server."""
@@ -1002,8 +1018,14 @@ class MariaDBServer:
         This method should be the target for anyio.run().
         """
         try:
-            # 1. Initialize pool within the anyio-managed loop
-            await self.initialize_pool()
+            # 1. Best-effort pool warm-up. Must NOT be fatal: when the DB lives
+            # behind a tunnel that isn't up yet, the connect fails here. The stdio
+            # transport still has to come up so the server registers and stays
+            # connected; the pool is then established lazily on the first query.
+            try:
+                await self.initialize_pool()
+            except Exception as e:
+                logger.warning(f"DB not reachable at startup; deferring pool init to first query: {e}")
 
             # 2. Register tools (synchronous part, but called from async context)
             self.register_tools()
