@@ -47,6 +47,9 @@ class MariaDBServer:
     def __init__(self, server_name="MariaDB_Server", autocommit=True):
         self.mcp = FastMCP(server_name)
         self.pool: Optional[asyncmy.Pool] = None
+        # Serializes lazy pool creation: with the pool built on first query, two
+        # concurrent first queries would otherwise both create a pool and orphan one.
+        self._pool_init_lock = asyncio.Lock()
         self.autocommit = autocommit
         self.is_read_only = MCP_READ_ONLY
         self.block_sensitive_show = MCP_BLOCK_SENSITIVE_SHOW
@@ -191,8 +194,14 @@ class MariaDBServer:
             else:
                 logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
             
-            self.pool = await create_safe_pool(**pool_params)
-            logger.info("Connection pool initialized successfully.")
+            async with self._pool_init_lock:
+                # Re-check under the lock: a concurrent first query may have built
+                # the pool while we awaited it. Without this, the second creator
+                # overwrites self.pool and leaks the first pool's connections.
+                if self.pool is not None:
+                    return
+                self.pool = await create_safe_pool(**pool_params)
+                logger.info("Connection pool initialized successfully.")
             if self.is_read_only:
                 await self._warn_if_file_privilege_enabled()
         except AsyncMyError as e:
