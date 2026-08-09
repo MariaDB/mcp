@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from server import MariaDBServer
-from custom_connection import SafeConnection
+from custom_connection import SafeConnection, SafePool
 from asyncmy.connection import Connection
 from asyncmy.constants.CLIENT import MULTI_STATEMENTS, LOCAL_FILES
 
@@ -284,6 +284,27 @@ class TestClientCapabilityAndPrivilegeWarnings(unittest.IsolatedAsyncioTestCase)
             if server.is_read_only:
                 await server._warn_if_file_privilege_enabled()
             self.assertFalse(mock_logger.error.called)
+
+
+class TestSafePool(unittest.IsolatedAsyncioTestCase):
+    async def test_discards_broken_connection_without_reader(self):
+        class BrokenConnection:
+            _stream_broken = True
+
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        pool = SafePool(minsize=0, maxsize=1)
+        conn = BrokenConnection()
+        pool._free.append(conn)
+
+        await pool.fill_free_pool()
+
+        self.assertTrue(conn.closed)
+        self.assertFalse(pool._free)
 
 
 @unittest.skipUnless(

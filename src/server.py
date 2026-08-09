@@ -517,8 +517,8 @@ class MariaDBServer:
 
     async def execute_sql(self, sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
         """
-        Executes a SQL query (primarily SELECT, SHOW, DESCRIBE) against a specified database
-        and returns the results. Uses parameterized queries for safety.
+        Executes one SQL statement against a specified database and returns any results.
+        Write statements are allowed only when MCP_READ_ONLY is false.
         Example `parameters`: ["value1", 123] corresponding to %s placeholders in `sql_query`.
         """
         logger.info(f"TOOL START: execute_sql called. database_name={database_name}, sql_query={sql_query[:100]}, parameters={parameters}")
@@ -921,7 +921,7 @@ class MariaDBServer:
             
         @self.mcp.tool
         async def execute_sql(sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
-            """Executes a read-only SQL query against a specified database."""
+            """Executes one SQL statement; writes require MCP_READ_ONLY=false."""
             return await self.execute_sql(sql_query, database_name, parameters)
             
         @self.mcp.tool
@@ -1022,7 +1022,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 1. Create the server instance
-    server = MariaDBServer()
+    server = MariaDBServer(server_name=os.getenv("MCP_SERVER_NAME", "MariaDB_Server"))
     exit_code = 0
 
     try:

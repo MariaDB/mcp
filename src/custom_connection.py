@@ -69,12 +69,15 @@ class SafePool(Pool):
         n = 0
         while n < free_size:
             conn = self._free[-1]
-            if conn._reader.at_eof() or conn._reader.exception():
+            if conn._stream_broken:
                 self._free.pop()
                 conn.close()
             elif self._recycle > -1 and self._loop.time() - conn.last_usage > self._recycle:
                 self._free.pop()
-                conn.close()
+                try:
+                    await conn.ensure_closed()
+                except Exception:
+                    conn.close()
             else:
                 self._free.rotate()
             n += 1
