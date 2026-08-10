@@ -274,6 +274,12 @@ For production use, you should create a dedicated database user with minimal pri
    uv run server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
    ```
 
+### Docker Compose
+
+```bash
+docker compose up --build
+```
+
 ---
 
 ## Usage Examples
