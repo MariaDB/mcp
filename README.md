@@ -28,11 +28,15 @@ The MCP MariaDB Server exposes a set of tools for interacting with MariaDB datab
 - Creating and managing vector stores for embedding-based search
 - Integrating with embedding providers (currently OpenAI, Gemini, and HuggingFace) (optional)
 
+### MySQL compatibility
+
+The server uses **asyncmy** (MySQL wire protocol) and works with **MySQL 8.x** as well as MariaDB — for example read-only access through an SSH tunnel to Amazon RDS. SQL queries, JSON columns, parameterized `execute_sql`, and read-only enforcement behave the same on MySQL. MariaDB-only features (vector stores, etc.) require MariaDB; for MySQL-only deployments, use the standard SQL and schema tools.
+
 ---
 
 ## Core Components
 
-- **server.py**: Main MCP server logic and tool definitions.
+- **src/server.py**: Main MCP server logic and tool definitions.
 - **config.py**: Loads configuration from environment and `.env` files.
 - **embeddings.py**: Handles embedding service integration (OpenAI).
 - **tests/**: Manual and automated test documentation and scripts.
@@ -129,7 +133,11 @@ A vector store table has the following columns:
 
 ## Configuration & Environment Variables
 
-All configuration is via environment variables (typically set in a `.env` file):
+All configuration is via environment variables (typically set in a `.env` file). Copy `.env.example` to `.env` and edit values:
+
+```bash
+cp .env.example .env
+```
 
 | Variable               | Description                                            | Required | Default      |
 |------------------------|--------------------------------------------------------|----------|--------------|
@@ -256,22 +264,23 @@ For production use, you should create a dedicated database user with minimal pri
    uv lock
    uv sync
    ```
-4. **Create `.env`** in the project root (see [Configuration](#configuration--environment-variables))
+4. **Create `.env`** in the project root: `cp .env.example .env` (see [Configuration](#configuration--environment-variables))
 5. **Run the server**
    
    **Standard Input/Output (default):**
    ```bash
-   uv run server.py
+   uv run src/server.py
    ```
+   Stdio is the default transport — no flag needed for Cursor, Claude Desktop, or Windsurf.
    
    **SSE Transport:**
    ```bash
-   uv run server.py --transport sse --host 127.0.0.1 --port 9001
+   uv run src/server.py --transport sse --host 127.0.0.1 --port 9001
    ```
    
    **HTTP Transport (streamable HTTP):**
    ```bash
-   uv run server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
+   uv run src/server.py --transport http --host 127.0.0.1 --port 9001 --path /mcp
    ```
 
 ---
@@ -336,7 +345,10 @@ For production use, you should create a dedicated database user with minimal pri
 
 ## Integration - Claude desktop/Cursor/Windsurf/VSCode
 
-### Option 1: Direct Command (stdio)
+### Option 1: Direct Command (stdio, default)
+
+Recommended for Cursor, Claude Desktop, and Windsurf. Use an absolute path to `uv` if your IDE does not inherit your shell `PATH`. Stdio is the default — you do not need `--transport stdio`.
+
 ```json
 {
   "mcpServers": {
@@ -344,20 +356,24 @@ For production use, you should create a dedicated database user with minimal pri
       "command": "uv",
       "args": [
         "--directory",
-        "path/to/mariadb-mcp-server/",
+        "/absolute/path/to/mcp",
         "run",
-        "server.py"
-        ],
-        "envFile": "path/to/mcp-server-mariadb-vector/.env"      
+        "src/server.py"
+      ],
+      "envFile": "/absolute/path/to/mcp/.env"
     }
   }
 }
 ```
 
+Alternatively, set `DB_*` variables under `"env"` instead of `envFile`.
+
+The server connects to the database at startup; if the DB is unreachable, the MCP client will show **Connection closed**.
+
 ### Option 2: SSE Transport
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "mariadb-mcp-server": {
       "url": "http://{host}:9001/sse",
       "type": "sse"
@@ -369,7 +385,7 @@ For production use, you should create a dedicated database user with minimal pri
 ### Option 3: HTTP Transport
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "mariadb-mcp-server": {
       "url": "http://{host}:9001/mcp",
       "type": "streamable-http"
@@ -378,42 +394,33 @@ For production use, you should create a dedicated database user with minimal pri
 }
 ```
 
-### Option 4: Docker container
+### Option 4: Docker container (stdio)
+
+For stdio MCP, do not publish ports or pass `--host` — the client talks over stdin/stdout. If the database runs on the **host** (e.g. an SSH tunnel on `127.0.0.1:3306`), set `DB_HOST=host.docker.internal` (Docker Desktop on Mac/Windows) instead of `127.0.0.1`.
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "mariadb-mcp-server": {
       "command": "docker",
       "args": [
         "run",
         "-i",
         "--rm",
-        "-p",
-        "9001:9001",
-        "-e",
-        "DB_HOST=",
-        "-e",
-        "DB_PORT=",
-        "-e",
-        "DB_USER=",
-        "-e",
-        "DB_PASSWORD=",
-        "-e",
-        "DB_NAME=",
-        "mariadb-mcp-server",
+        "--env-file",
+        "/absolute/path/to/mcp/.env",
+        "mcp-mariadb-mcp",
         "python",
         "src/server.py",
-        "--host",
-        "0.0.0.0",
         "--transport",
         "stdio"
       ]
     }
   }
 }
-
 ```
+
+Build the image first: `docker compose build mariadb-mcp` (or `docker build -t mcp-mariadb-mcp .`).
 
 ---
 
