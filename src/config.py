@@ -96,7 +96,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Open models from Huggingface
 HF_MODEL = os.getenv("HF_MODEL")
-
+# Ollama Configuration
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "localhost")
+OLLAMA_PORT = os.getenv("OLLAMA_PORT", 11434)
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
 # --- Validation ---
 if not DB_USER:
@@ -118,9 +121,13 @@ elif EMBEDDING_PROVIDER == "huggingface":
     if not HF_MODEL:
         logger.error("EMBEDDING_PROVIDER is 'huggingface' but HF_MODEL is missing.")
         raise ValueError("HuggingFace model is required when EMBEDDING_PROVIDER is 'huggingface'.")
+elif EMBEDDING_PROVIDER == "ollama":
+    if not OLLAMA_MODEL:
+        logger.error("EMBEDDING_PROVIDER is 'ollama' but OLLAMA_MODEL is missing.")
+        raise ValueError("Ollama model is required when EMBEDDING_PROVIDER is 'ollama'.")
 else:
     EMBEDDING_PROVIDER = None
-    logger.info(f"No EMBEDDING_PROVIDER selected or it is set to None. Disabling embedding features.")
+    logger.info("No EMBEDDING_PROVIDER selected or it is set to None. Disabling embedding features.")
 
 logger.info(f"Read-only mode: {MCP_READ_ONLY}")
 logger.info(f"Block sensitive SHOW commands: {MCP_BLOCK_SENSITIVE_SHOW}")
