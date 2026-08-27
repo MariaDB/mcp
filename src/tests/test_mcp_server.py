@@ -259,5 +259,34 @@ class TestMariaDBMCPTools(unittest.IsolatedAsyncioTestCase):
                     pass
             tg.cancel_scope.cancel()
 
+    async def annotations_by_tool_name(self):
+        async with anyio.create_task_group() as tg:
+            await self.task_group_helper(tg)
+            async with self.client:
+                tools = await self.client.list_tools()
+                annotations = {tool.name: tool.annotations for tool in tools}
+            tg.cancel_scope.cancel()
+        return annotations
+
+    async def test_read_only_tools_annotated_read_only(self):
+        annotations = await self.annotations_by_tool_name()
+        for tool_name in ['list_databases', 'list_tables', 'get_table_schema', 'get_table_schema_with_relations']:
+            self.assertTrue(annotations[tool_name].readOnlyHint, tool_name)
+
+    async def test_writing_tools_annotated_not_read_only(self):
+        annotations = await self.annotations_by_tool_name()
+        self.assertFalse(annotations['create_database'].readOnlyHint)
+        self.assertFalse(annotations['create_database'].destructiveHint)
+
+    async def test_execute_sql_annotated_read_only_in_read_only_mode(self):
+        self.server.is_read_only = True
+        annotations = await self.annotations_by_tool_name()
+        self.assertTrue(annotations['execute_sql'].readOnlyHint)
+
+    async def test_execute_sql_annotated_writing_outside_read_only_mode(self):
+        self.server.is_read_only = False
+        annotations = await self.annotations_by_tool_name()
+        self.assertFalse(annotations['execute_sql'].readOnlyHint)
+
 if __name__ == "__main__":
     unittest.main()
