@@ -305,6 +305,21 @@ class TestQueryValidation(unittest.TestCase):
                     self._test_query_blocked(query, "MCP_BLOCK_SENSITIVE_SHOW")
                 )
 
+    def test_show_full_processlist_is_blocked(self):
+        """SHOW FULL PROCESSLIST exposes MORE of other sessions' query text than the
+        bare form, so a filter that blocks only the bare form fences nothing."""
+        self.loop.run_until_complete(
+            self._test_query_blocked("SHOW FULL PROCESSLIST", "MCP_BLOCK_SENSITIVE_SHOW")
+        )
+
+    def test_show_engine_innodb_status_is_blocked(self):
+        """`SHOW ENGINE STATUS` is not a MariaDB statement; the real ones name an
+        engine, so matching the literal text blocked nothing that can be run."""
+        for q in ("SHOW ENGINE INNODB STATUS", "SHOW ENGINE PERFORMANCE_SCHEMA STATUS"):
+            self.loop.run_until_complete(
+                self._test_query_blocked(q, "MCP_BLOCK_SENSITIVE_SHOW")
+            )
+
     def test_safe_show_variants_still_allowed(self):
         """Ordinary schema-inspection SHOW commands remain unaffected."""
         queries = [

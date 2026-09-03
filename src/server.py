@@ -279,10 +279,10 @@ class MariaDBServer:
         # when writes are allowed, others explicitly want it available in
         # read-only mode.
         if self.block_sensitive_show and query_upper.startswith('SHOW') and re.search(
-            r'\bSHOW\s+(PROCESSLIST|(GLOBAL\s+|SESSION\s+)?VARIABLES|'
+            r'\bSHOW\s+((FULL\s+)?PROCESSLIST|(GLOBAL\s+|SESSION\s+)?VARIABLES|'
             r'MASTER\s+STATUS|BINARY\s+LOGS|BINLOG\s+EVENTS|'
             r'(SLAVE|REPLICA)\s+STATUS|SLAVE\s+HOSTS|'
-            r'GRANTS|CREATE\s+USER|PRIVILEGES|ENGINE\s+STATUS)\b',
+            r'GRANTS|CREATE\s+USER|PRIVILEGES|ENGINE(\s+\w+)?\s+STATUS)\b',
             query_upper,
         ):
             logger.warning(f"Blocked sensitive SHOW query: {sql[:100]}...")
