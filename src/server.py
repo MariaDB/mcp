@@ -271,6 +271,19 @@ class MariaDBServer:
                 logger.warning(f"Blocked query containing SELECT INTO OUTFILE or DUMPFILE: {sql[:100]}...")
                 raise PermissionError("Operation forbidden: SELECT INTO OUTFILE and SELECT INTO DUMPFILE are not allowed for security reasons.")
 
+            # Locking reads start with SELECT, so the prefix allow-list above
+            # passes them, but they take InnoDB row locks rather than reading a
+            # snapshot. On a replica that is enough to stall the applier: the
+            # SQL thread blocks behind the lock, retries until it exhausts
+            # slave_transaction_retries, and then aborts replication outright.
+            # A read-only server has no business taking write-path locks.
+            if re.search(r'\bLOCK\s+IN\s+SHARE\s+MODE\b|\bFOR\s+(UPDATE|SHARE)\b', query_upper):
+                logger.warning(f"Blocked locking read in read-only mode: {sql[:100]}...")
+                raise PermissionError(
+                    "Operation forbidden: locking reads (LOCK IN SHARE MODE, FOR UPDATE, FOR SHARE) "
+                    "are not allowed in read-only mode."
+                )
+
         # SHOW admits an entire subcommand namespace, some of which leak
         # cross-connection or system-sensitive data (e.g. SHOW PROCESSLIST
         # exposes query text/parameters from *other* active sessions).

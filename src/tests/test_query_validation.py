@@ -340,6 +340,47 @@ class TestQueryValidation(unittest.TestCase):
             self._test_query_allowed(query)
         )
 
+    def test_lock_in_share_mode_is_blocked(self):
+        """Locking reads pass the SELECT prefix allow-list but take row locks;
+        on a replica they can stall and then abort the replication applier."""
+        self.loop.run_until_complete(
+            self._test_query_blocked(
+                "SELECT * FROM users WHERE id = 1 LOCK IN SHARE MODE",
+                "locking reads",
+            )
+        )
+
+    def test_select_for_update_is_blocked(self):
+        self.loop.run_until_complete(
+            self._test_query_blocked(
+                "select id from orders for update", "locking reads"
+            )
+        )
+
+    def test_select_for_share_is_blocked(self):
+        self.loop.run_until_complete(
+            self._test_query_blocked("SELECT id FROM orders FOR SHARE", "locking reads")
+        )
+
+    def test_locking_clause_in_executable_comment_is_blocked(self):
+        self.loop.run_until_complete(
+            self._test_query_blocked(
+                "SELECT id FROM orders /*!40001 FOR UPDATE */", "locking reads"
+            )
+        )
+
+    def test_locking_clause_in_string_literal_is_allowed(self):
+        """The literal text is data, not a locking clause."""
+        self.loop.run_until_complete(
+            self._test_query_allowed("SELECT 'lock in share mode' AS note")
+        )
+
+    def test_locking_read_allowed_when_not_read_only(self):
+        self.server.is_read_only = False
+        self.loop.run_until_complete(
+            self._test_query_allowed("SELECT id FROM orders FOR UPDATE")
+        )
+
 
 class TestAutocommit(unittest.TestCase):
     """Test that autocommit respects the constructor parameter (issue: stale
