@@ -193,7 +193,16 @@ class MariaDBServer:
             # single statement: comma-separated assignments, never ';'.
             init_settings = []
             if MCP_MAX_STATEMENT_TIME > 0:
-                init_settings.append(f"SESSION max_statement_time={MCP_MAX_STATEMENT_TIME:g}")
+                # Fixed-point, never exponential: max_statement_time is a
+                # DOUBLE, so sub-second values must survive, but a format like
+                # ':g' caps at 6 significant digits and would render 1234567
+                # as '1.23457e+06' — a different limit than the one configured.
+                statement_time = f"{MCP_MAX_STATEMENT_TIME:.6f}".rstrip("0").rstrip(".")
+                if statement_time == "0":
+                    # Below microsecond resolution. Sending '0' would mean "no
+                    # limit" — the exact opposite of what was configured.
+                    statement_time = "0.000001"
+                init_settings.append(f"SESSION max_statement_time={statement_time}")
             if MCP_LOCK_WAIT_TIMEOUT > 0:
                 init_settings.append(f"SESSION lock_wait_timeout={MCP_LOCK_WAIT_TIMEOUT}")
             if init_settings:
@@ -272,6 +281,15 @@ class MariaDBServer:
         query_upper = sql_normalized.upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
 
+        # Session-level table locks are NOT ended by ROLLBACK: MariaDB releases
+        # them only on UNLOCK TABLES, on starting a transaction, or when the
+        # session ends. Left alone they would ride back into the pool and block
+        # every later user of that connection, so they need an explicit unlock.
+        # Only reachable when the server is not in read-only mode.
+        takes_table_locks = bool(re.match(
+            r'(LOCK\s+TABLES?|FLUSH\b[\s\S]*\bWITH\s+READ\s+LOCK)\b', query_upper
+        ))
+
         if self.is_read_only and not is_allowed_read_query:
              logger.warning(f"Blocked potentially non-read-only query in read-only mode: {sql[:100]}...")
              raise PermissionError("Operation forbidden: Server is in read-only mode.")
@@ -331,19 +349,26 @@ class MariaDBServer:
                         logger.info(f"Query executed successfully, {len(results)} rows returned.")
                         return results if results else []
                 finally:
-                    # End any transaction before the connection returns to the
-                    # pool. autocommit covers ordinary statements, but a client
-                    # can open a transaction explicitly (BEGIN, START
-                    # TRANSACTION, LOCK TABLES) and nothing else in this path
-                    # would ever end it — it would survive in the pool until
-                    # pool_recycle, holding locks and pinning a read view
-                    # against every later user of that connection.
+                    # End any transaction or table lock before the connection
+                    # returns to the pool. autocommit covers ordinary
+                    # statements, but a client can open a transaction
+                    # explicitly (BEGIN, START TRANSACTION) and nothing else in
+                    # this path would ever end it. The pool discards a
+                    # connection released mid-transaction rather than reusing
+                    # it, so resetting here is what lets it be reused at all.
                     #
                     # Rollback rather than commit: this server has no notion of
                     # an intended unit of work spanning calls, so an abandoned
                     # transaction must not be silently persisted.
+                    #
+                    # Gated on the connection's own transaction status so the
+                    # common autocommit read costs no extra round trip.
                     try:
-                        await conn.rollback()
+                        if conn.get_transaction_status():
+                            await conn.rollback()
+                        if takes_table_locks:
+                            async with conn.cursor() as reset_cursor:
+                                await reset_cursor.execute("UNLOCK TABLES")
                     except Exception as reset_error:
                         # Best effort. The connection may already be broken, and
                         # that must not turn a successful read into an error;

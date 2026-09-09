@@ -612,15 +612,16 @@ if __name__ == '__main__':
 
 class TestConnectionHygiene(unittest.IsolatedAsyncioTestCase):
     """
-    A pooled connection must never be handed back carrying an open
-    transaction. autocommit=True covers ordinary statements, but a client can
-    still open one explicitly (BEGIN / START TRANSACTION / LOCK TABLES) through
-    execute_sql. Nothing else in the request path ends it, so without a reset
-    the transaction — and the metadata locks it holds — survives in the pool
-    until pool_recycle, blocking DDL behind it for up to an hour.
+    A pooled connection must never be handed back carrying an open transaction
+    or a held table lock. autocommit=True covers ordinary statements, but a
+    client can still open a transaction explicitly (BEGIN / START TRANSACTION)
+    through execute_sql, and nothing else in the request path ends it — the
+    pool then throws the connection away on release instead of reusing it.
+    Table locks are separate: ROLLBACK does not end them, only UNLOCK TABLES
+    does, so they would otherwise ride back into the pool still held.
     """
 
-    def _make_server_with_conn(self, execute_side_effect=None):
+    def _make_server_with_conn(self, execute_side_effect=None, in_transaction=False):
         server = MariaDBServer(server_name="TestServer")
         server.is_read_only = False
         server.block_sensitive_show = False
@@ -635,6 +636,7 @@ class TestConnectionHygiene(unittest.IsolatedAsyncioTestCase):
         conn = MagicMock()
         conn.cursor = MagicMock(return_value=cursor)
         conn.rollback = AsyncMock(return_value=None)
+        conn.get_transaction_status = MagicMock(return_value=in_transaction)
 
         acquire_cm = MagicMock()
         acquire_cm.__aenter__ = AsyncMock(return_value=conn)
@@ -645,16 +647,17 @@ class TestConnectionHygiene(unittest.IsolatedAsyncioTestCase):
         server.pool = pool
         return server, conn
 
-    async def test_rollback_on_success_path(self):
-        """A completed read still resets the connection before release."""
-        server, conn = self._make_server_with_conn()
+    async def test_no_rollback_when_no_transaction_is_open(self):
+        """The autocommit read is the overwhelmingly common path; it must not
+        pay for a ROLLBACK round trip it has nothing to roll back."""
+        server, conn = self._make_server_with_conn(in_transaction=False)
         await server._execute_query("SELECT 1")
-        conn.rollback.assert_awaited_once()
+        conn.rollback.assert_not_awaited()
 
     async def test_rollback_after_explicit_transaction_statement(self):
-        """The case that strands a transaction in the pool: the client opened
-        one itself, so only an unconditional reset can close it."""
-        server, conn = self._make_server_with_conn()
+        """The case that would otherwise cost the pool a connection: the client
+        opened a transaction itself, so the reset is what makes it reusable."""
+        server, conn = self._make_server_with_conn(in_transaction=True)
         await server._execute_query("START TRANSACTION")
         conn.rollback.assert_awaited_once()
 
@@ -662,7 +665,7 @@ class TestConnectionHygiene(unittest.IsolatedAsyncioTestCase):
         """The error path must reset too: a failed statement can leave a
         partially-applied transaction holding locks."""
         server, conn = self._make_server_with_conn(
-            execute_side_effect=[None, AsyncMyError("boom")]
+            execute_side_effect=[None, AsyncMyError("boom")], in_transaction=True
         )
         with self.assertRaises(RuntimeError):
             await server._execute_query("SELECT 1")
@@ -671,10 +674,29 @@ class TestConnectionHygiene(unittest.IsolatedAsyncioTestCase):
     async def test_rollback_failure_does_not_discard_results(self):
         """Resetting is best-effort. If the connection is already gone the
         rollback fails, but that must not turn a successful read into an error."""
-        server, conn = self._make_server_with_conn()
+        server, conn = self._make_server_with_conn(in_transaction=True)
         conn.rollback = AsyncMock(side_effect=AsyncMyError("connection lost"))
         results = await server._execute_query("SELECT 1")
         self.assertEqual(results, [{'id': 1}])
+
+    async def test_lock_tables_is_unlocked_before_release(self):
+        """ROLLBACK does not release LOCK TABLES — MariaDB holds those until
+        UNLOCK TABLES, a new transaction, or disconnect. Without the explicit
+        unlock the connection returns to the pool still holding a write lock,
+        blocking every later query against that table."""
+        server, conn = self._make_server_with_conn(in_transaction=False)
+        cursor = conn.cursor.return_value
+        await server._execute_query("LOCK TABLES t WRITE")
+        executed = [call.args[0] for call in cursor.execute.await_args_list]
+        self.assertIn("UNLOCK TABLES", executed)
+
+    async def test_ordinary_read_does_not_unlock_tables(self):
+        """The unlock is scoped to locking statements, not every query."""
+        server, conn = self._make_server_with_conn(in_transaction=False)
+        cursor = conn.cursor.return_value
+        await server._execute_query("SELECT 1")
+        executed = [call.args[0] for call in cursor.execute.await_args_list]
+        self.assertNotIn("UNLOCK TABLES", executed)
 
 
 class TestSessionTimeouts(unittest.IsolatedAsyncioTestCase):
@@ -744,10 +766,41 @@ class TestSessionTimeouts(unittest.IsolatedAsyncioTestCase):
         """Both limits default to off, so upgrading cannot start failing
         long-running statements that previously succeeded."""
         import config
-        self.assertEqual(config.MCP_MAX_STATEMENT_TIME, 0)
-        self.assertEqual(config.MCP_LOCK_WAIT_TIMEOUT, 0)
-        params = await self._pool_params()
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(config._non_negative("MCP_MAX_STATEMENT_TIME", 0.0, float), 0.0)
+            self.assertEqual(config._non_negative("MCP_LOCK_WAIT_TIMEOUT", 0, int), 0)
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=0, MCP_LOCK_WAIT_TIMEOUT=0
+        )
         self.assertNotIn("init_command", params)
+
+    async def test_large_statement_time_is_not_rendered_in_scientific_notation(self):
+        """A '%g'-style format caps at 6 significant digits, so 1234567 would
+        reach the server as 1.23457e+06 — a different limit than configured."""
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=1234567, MCP_LOCK_WAIT_TIMEOUT=0
+        )
+        self.assertEqual(
+            params["init_command"], "SET SESSION max_statement_time=1234567"
+        )
+
+    def test_non_numeric_config_names_the_variable(self):
+        """These are parsed at import time; a bare ValueError would kill the
+        server at startup without saying which setting was wrong."""
+        import config
+        with patch.dict(os.environ, {"MCP_LOCK_WAIT_TIMEOUT": "off"}):
+            with self.assertRaises(ValueError) as ctx:
+                config._non_negative("MCP_LOCK_WAIT_TIMEOUT", 0, int)
+        self.assertIn("MCP_LOCK_WAIT_TIMEOUT", str(ctx.exception))
+
+    def test_negative_config_is_rejected(self):
+        """A negative limit is silently ignored by the '> 0' guard, which reads
+        as 'applied' to whoever set it."""
+        import config
+        with patch.dict(os.environ, {"MCP_MAX_STATEMENT_TIME": "-1"}):
+            with self.assertRaises(ValueError) as ctx:
+                config._non_negative("MCP_MAX_STATEMENT_TIME", 0.0, float)
+        self.assertIn("zero or positive", str(ctx.exception))
 
     async def test_fractional_statement_time_is_preserved(self):
         """max_statement_time is a DOUBLE in MariaDB; sub-second limits are

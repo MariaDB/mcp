@@ -149,7 +149,7 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `MCP_BLOCK_SENSITIVE_SHOW` | Block sensitive `SHOW` commands (`PROCESSLIST`, `GRANTS`, `VARIABLES`, `MASTER`/`REPLICA STATUS`, `BINARY LOGS`, etc.) that can leak cross-connection query text, credentials/privileges, or replication topology. Set independently of `MCP_READ_ONLY` (`true`/`false`) | No | `true` |
 | `MCP_MAX_POOL_SIZE`    | Max DB connection pool size                            | No       | `10`         |
 | `MCP_MAX_STATEMENT_TIME` | Per-statement time limit in seconds (MariaDB `max_statement_time`; fractional values allowed). `0` leaves the server default in place. Recommended for unattended or agent-driven use, where a runaway statement would otherwise run unbounded. | No | `0` (off) |
-| `MCP_LOCK_WAIT_TIMEOUT` | How long a statement waits for a metadata lock, in seconds (MariaDB `lock_wait_timeout`, whose default is effectively unbounded at one year). `0` leaves the server default in place. | No | `0` (off) |
+| `MCP_LOCK_WAIT_TIMEOUT` | How long a statement waits for a metadata lock, in seconds (MariaDB `lock_wait_timeout`, whose default of `86400` is a full day). `0` leaves the server default in place. | No | `0` (off) |
 | `EMBEDDING_PROVIDER`   | Embedding provider (`openai`/`gemini`/`huggingface`)   | No     |`None`(Disabled)|
 | `OPENAI_API_KEY`       | API key for OpenAI embeddings                          | Yes (if EMBEDDING_PROVIDER=openai) | |
 | `GEMINI_API_KEY`       | API key for Gemini embeddings                          | Yes (if EMBEDDING_PROVIDER=gemini) | |

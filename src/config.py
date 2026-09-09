@@ -93,15 +93,38 @@ MCP_BLOCK_SENSITIVE_SHOW = os.getenv("MCP_BLOCK_SENSITIVE_SHOW", "true").lower()
 # MCP_MAX_STATEMENT_TIME caps how long a single statement may run
 # (MariaDB max_statement_time, seconds, fractional allowed).
 # MCP_LOCK_WAIT_TIMEOUT caps how long a statement waits for a metadata lock
-# (MariaDB lock_wait_timeout, whole seconds), whose default is effectively
-# "forever" at one year.
+# (MariaDB lock_wait_timeout, whole seconds), whose default of 86400 lets a
+# single blocked statement hold a request open for a day.
 #
 # Both default to 0, meaning "do not set" — the server's own defaults apply and
 # behaviour is unchanged unless a deployment opts in. Setting them is
 # recommended for unattended or agent-driven use, where a runaway statement or
-# a lock wait would otherwise block indefinitely.
-MCP_MAX_STATEMENT_TIME = float(os.getenv("MCP_MAX_STATEMENT_TIME", 0))
-MCP_LOCK_WAIT_TIMEOUT = int(os.getenv("MCP_LOCK_WAIT_TIMEOUT", 0))
+# a lock wait would otherwise block for far longer than any caller expects.
+
+
+def _non_negative(name, default, parse):
+    """Parse a numeric env var, naming it in the error.
+
+    These are read at import time, so an unparseable value would otherwise
+    kill the server at startup with a bare ValueError that never says which
+    setting was wrong.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = parse(raw.strip())
+    except ValueError:
+        logger.error(f"{name} must be a number, got {raw!r}. Use 0 to disable.")
+        raise ValueError(f"{name} must be a number, got {raw!r}. Use 0 to disable.") from None
+    if value < 0:
+        logger.error(f"{name} must be zero or positive, got {value}. Use 0 to disable.")
+        raise ValueError(f"{name} must be zero or positive, got {value}. Use 0 to disable.")
+    return value
+
+
+MCP_MAX_STATEMENT_TIME = _non_negative("MCP_MAX_STATEMENT_TIME", 0.0, float)
+MCP_LOCK_WAIT_TIMEOUT = _non_negative("MCP_LOCK_WAIT_TIMEOUT", 0, int)
 
 # --- Embedding Configuration ---
 # Provider selection ('openai' or 'gemini' or 'huggingface')
