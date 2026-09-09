@@ -5,6 +5,7 @@ from config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
     DB_SSL, DB_SSL_CA, DB_SSL_CERT, DB_SSL_KEY, DB_SSL_VERIFY_CERT, DB_SSL_VERIFY_IDENTITY,
     MCP_READ_ONLY, MCP_MAX_POOL_SIZE, MCP_BLOCK_SENSITIVE_SHOW, EMBEDDING_PROVIDER,
+    MCP_MAX_STATEMENT_TIME, MCP_LOCK_WAIT_TIMEOUT,
     ALLOWED_ORIGINS, ALLOWED_HOSTS,
     logger
 )
@@ -185,6 +186,20 @@ class MariaDBServer:
             if DB_SSL and ssl_context is not None:
                 pool_params["ssl"] = ssl_context
 
+            # Apply session limits once per connection rather than per query,
+            # so they hold for every statement the connection ever runs —
+            # including ones issued before this server sees a result.
+            # SafeConnection clears MULTI_STATEMENTS, so this must stay a
+            # single statement: comma-separated assignments, never ';'.
+            init_settings = []
+            if MCP_MAX_STATEMENT_TIME > 0:
+                init_settings.append(f"SESSION max_statement_time={MCP_MAX_STATEMENT_TIME:g}")
+            if MCP_LOCK_WAIT_TIMEOUT > 0:
+                init_settings.append(f"SESSION lock_wait_timeout={MCP_LOCK_WAIT_TIMEOUT}")
+            if init_settings:
+                pool_params["init_command"] = "SET " + ", ".join(init_settings)
+                logger.info(f"Session limits applied per connection: {pool_params['init_command']}")
+
             if DB_CHARSET:
                 pool_params["charset"] = DB_CHARSET
                 logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE}, charset: {DB_CHARSET})")
@@ -295,25 +310,45 @@ class MariaDBServer:
         conn = None
         try:
             async with self.pool.acquire() as conn:
-                async with conn.cursor(cursor=asyncmy.cursors.DictCursor) as cursor:
-                    current_db_query = "SELECT DATABASE()"
-                    await cursor.execute(current_db_query)
-                    current_db_result = await cursor.fetchone()
-                    current_db_name = current_db_result.get('DATABASE()') if current_db_result else None
-                    pool_db_name = DB_NAME
-                    actual_current_db = current_db_name or pool_db_name
+                try:
+                    async with conn.cursor(cursor=asyncmy.cursors.DictCursor) as cursor:
+                        current_db_query = "SELECT DATABASE()"
+                        await cursor.execute(current_db_query)
+                        current_db_result = await cursor.fetchone()
+                        current_db_name = current_db_result.get('DATABASE()') if current_db_result else None
+                        pool_db_name = DB_NAME
+                        actual_current_db = current_db_name or pool_db_name
 
-                    if database and database != actual_current_db:
-                        logger.info(f"Switching database context from '{actual_current_db}' to '{database}'")
-                        await cursor.execute(f"USE `{database}`")
+                        if database and database != actual_current_db:
+                            logger.info(f"Switching database context from '{actual_current_db}' to '{database}'")
+                            await cursor.execute(f"USE `{database}`")
 
-                    if params is None:
-                        await cursor.execute(sql)
-                    else:
-                        await cursor.execute(sql, params)
-                    results = await cursor.fetchall()
-                    logger.info(f"Query executed successfully, {len(results)} rows returned.")
-                    return results if results else []
+                        if params is None:
+                            await cursor.execute(sql)
+                        else:
+                            await cursor.execute(sql, params)
+                        results = await cursor.fetchall()
+                        logger.info(f"Query executed successfully, {len(results)} rows returned.")
+                        return results if results else []
+                finally:
+                    # End any transaction before the connection returns to the
+                    # pool. autocommit covers ordinary statements, but a client
+                    # can open a transaction explicitly (BEGIN, START
+                    # TRANSACTION, LOCK TABLES) and nothing else in this path
+                    # would ever end it — it would survive in the pool until
+                    # pool_recycle, holding locks and pinning a read view
+                    # against every later user of that connection.
+                    #
+                    # Rollback rather than commit: this server has no notion of
+                    # an intended unit of work spanning calls, so an abandoned
+                    # transaction must not be silently persisted.
+                    try:
+                        await conn.rollback()
+                    except Exception as reset_error:
+                        # Best effort. The connection may already be broken, and
+                        # that must not turn a successful read into an error;
+                        # the pool discards unusable connections on release.
+                        logger.warning(f"Could not reset connection before returning it to the pool: {reset_error}")
         except AsyncMyError as e:
             conn_state = f"Connection: {'acquired' if conn else 'not acquired'}"
             logger.error(f"Database error executing query ({conn_state}): {e}", exc_info=True)

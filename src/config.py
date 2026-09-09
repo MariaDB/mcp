@@ -87,6 +87,22 @@ MCP_MAX_POOL_SIZE = int(os.getenv("MCP_MAX_POOL_SIZE", 10))
 # blocking, which is the safer default.
 MCP_BLOCK_SENSITIVE_SHOW = os.getenv("MCP_BLOCK_SENSITIVE_SHOW", "true").lower() == "true"
 
+# Per-session limits applied once per pooled connection, so they bound every
+# statement run on it.
+#
+# MCP_MAX_STATEMENT_TIME caps how long a single statement may run
+# (MariaDB max_statement_time, seconds, fractional allowed).
+# MCP_LOCK_WAIT_TIMEOUT caps how long a statement waits for a metadata lock
+# (MariaDB lock_wait_timeout, whole seconds), whose default is effectively
+# "forever" at one year.
+#
+# Both default to 0, meaning "do not set" — the server's own defaults apply and
+# behaviour is unchanged unless a deployment opts in. Setting them is
+# recommended for unattended or agent-driven use, where a runaway statement or
+# a lock wait would otherwise block indefinitely.
+MCP_MAX_STATEMENT_TIME = float(os.getenv("MCP_MAX_STATEMENT_TIME", 0))
+MCP_LOCK_WAIT_TIMEOUT = int(os.getenv("MCP_LOCK_WAIT_TIMEOUT", 0))
+
 # --- Embedding Configuration ---
 # Provider selection ('openai' or 'gemini' or 'huggingface')
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")

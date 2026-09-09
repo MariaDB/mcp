@@ -7,6 +7,7 @@ including in subqueries, while allowing them in string literals.
 
 import unittest
 import asyncio
+import contextlib
 import sys
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,7 @@ from server import MariaDBServer
 from custom_connection import SafeConnection, SafePool, _connection_stream_broken
 from asyncmy.connection import Connection
 from asyncmy.constants.CLIENT import MULTI_STATEMENTS, LOCAL_FILES
+from asyncmy.errors import Error as AsyncMyError
 
 
 class TestQueryValidation(unittest.TestCase):
@@ -606,3 +608,153 @@ if __name__ == '__main__':
     
     # Run tests
     unittest.main(verbosity=2)
+
+
+class TestConnectionHygiene(unittest.IsolatedAsyncioTestCase):
+    """
+    A pooled connection must never be handed back carrying an open
+    transaction. autocommit=True covers ordinary statements, but a client can
+    still open one explicitly (BEGIN / START TRANSACTION / LOCK TABLES) through
+    execute_sql. Nothing else in the request path ends it, so without a reset
+    the transaction — and the metadata locks it holds — survives in the pool
+    until pool_recycle, blocking DDL behind it for up to an hour.
+    """
+
+    def _make_server_with_conn(self, execute_side_effect=None):
+        server = MariaDBServer(server_name="TestServer")
+        server.is_read_only = False
+        server.block_sensitive_show = False
+
+        cursor = MagicMock()
+        cursor.__aenter__ = AsyncMock(return_value=cursor)
+        cursor.__aexit__ = AsyncMock(return_value=None)
+        cursor.execute = AsyncMock(side_effect=execute_side_effect)
+        cursor.fetchone = AsyncMock(return_value={'DATABASE()': 'testdb'})
+        cursor.fetchall = AsyncMock(return_value=[{'id': 1}])
+
+        conn = MagicMock()
+        conn.cursor = MagicMock(return_value=cursor)
+        conn.rollback = AsyncMock(return_value=None)
+
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+
+        pool = MagicMock()
+        pool.acquire = MagicMock(return_value=acquire_cm)
+        server.pool = pool
+        return server, conn
+
+    async def test_rollback_on_success_path(self):
+        """A completed read still resets the connection before release."""
+        server, conn = self._make_server_with_conn()
+        await server._execute_query("SELECT 1")
+        conn.rollback.assert_awaited_once()
+
+    async def test_rollback_after_explicit_transaction_statement(self):
+        """The case that strands a transaction in the pool: the client opened
+        one itself, so only an unconditional reset can close it."""
+        server, conn = self._make_server_with_conn()
+        await server._execute_query("START TRANSACTION")
+        conn.rollback.assert_awaited_once()
+
+    async def test_rollback_on_query_error(self):
+        """The error path must reset too: a failed statement can leave a
+        partially-applied transaction holding locks."""
+        server, conn = self._make_server_with_conn(
+            execute_side_effect=[None, AsyncMyError("boom")]
+        )
+        with self.assertRaises(RuntimeError):
+            await server._execute_query("SELECT 1")
+        conn.rollback.assert_awaited_once()
+
+    async def test_rollback_failure_does_not_discard_results(self):
+        """Resetting is best-effort. If the connection is already gone the
+        rollback fails, but that must not turn a successful read into an error."""
+        server, conn = self._make_server_with_conn()
+        conn.rollback = AsyncMock(side_effect=AsyncMyError("connection lost"))
+        results = await server._execute_query("SELECT 1")
+        self.assertEqual(results, [{'id': 1}])
+
+
+class TestSessionTimeouts(unittest.IsolatedAsyncioTestCase):
+    """
+    Session limits are applied once per connection via init_command, so they
+    hold for every statement run on it. Without them a single query — or a wait
+    on someone else's metadata lock — blocks indefinitely.
+    """
+
+    async def _pool_params(self, **config_overrides):
+        server = MariaDBServer(server_name="TestServer")
+        server.is_read_only = False
+        captured = {}
+
+        async def fake_create_safe_pool(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        patches = {
+            "server.DB_USER": "u",
+            "server.DB_PASSWORD": "p",
+            "server.DB_SSL": False,
+            "server.DB_CHARSET": None,
+        }
+        patches.update({f"server.{k}": v for k, v in config_overrides.items()})
+
+        with patch("server.create_safe_pool", new=fake_create_safe_pool):
+            with contextlib.ExitStack() as stack:
+                for target, value in patches.items():
+                    stack.enter_context(patch(target, value))
+                await server.initialize_pool()
+        return captured
+
+    async def test_init_command_sets_both_timeouts(self):
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=30, MCP_LOCK_WAIT_TIMEOUT=10
+        )
+        self.assertEqual(
+            params["init_command"],
+            "SET SESSION max_statement_time=30, SESSION lock_wait_timeout=10",
+        )
+
+    async def test_init_command_is_a_single_statement(self):
+        """SafeConnection clears MULTI_STATEMENTS, so an init_command
+        containing ';' would be rejected by the server at connect time."""
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=30, MCP_LOCK_WAIT_TIMEOUT=10
+        )
+        self.assertNotIn(";", params["init_command"])
+
+    async def test_zero_disables_a_single_timeout(self):
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=0, MCP_LOCK_WAIT_TIMEOUT=10
+        )
+        self.assertEqual(
+            params["init_command"], "SET SESSION lock_wait_timeout=10"
+        )
+
+    async def test_zero_for_both_omits_init_command(self):
+        """Escape hatch: leaves the server's own defaults untouched."""
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=0, MCP_LOCK_WAIT_TIMEOUT=0
+        )
+        self.assertNotIn("init_command", params)
+
+    async def test_defaults_leave_server_behaviour_unchanged(self):
+        """Both limits default to off, so upgrading cannot start failing
+        long-running statements that previously succeeded."""
+        import config
+        self.assertEqual(config.MCP_MAX_STATEMENT_TIME, 0)
+        self.assertEqual(config.MCP_LOCK_WAIT_TIMEOUT, 0)
+        params = await self._pool_params()
+        self.assertNotIn("init_command", params)
+
+    async def test_fractional_statement_time_is_preserved(self):
+        """max_statement_time is a DOUBLE in MariaDB; sub-second limits are
+        legitimate and must not be rounded or rendered as '0.5.0'."""
+        params = await self._pool_params(
+            MCP_MAX_STATEMENT_TIME=0.5, MCP_LOCK_WAIT_TIMEOUT=0
+        )
+        self.assertEqual(
+            params["init_command"], "SET SESSION max_statement_time=0.5"
+        )
