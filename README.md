@@ -127,6 +127,78 @@ A vector store table has the following columns:
 
 ---
 
+## Connection Profiles (multiple endpoints in one process)
+
+By default this server pins **one** connection, read from `DB_*` at startup. With many
+endpoints (per environment, per service) that means one registered MCP server — and one
+OS process — per endpoint. Fifteen endpoints across six editor sessions is 180 processes.
+
+Profiles let a single process carry many named endpoints. Every database tool takes an
+optional `profile` argument, and each profile gets its own lazily-created pool with its
+own `read_only` setting.
+
+```
+list_profiles()                                   -> [{profile, host, port, database, read_only}, ...]
+execute_sql("SELECT 1", "appdb", profile="dev")  -> runs against the 'dev' endpoint
+```
+
+### Configuring profiles
+
+Resolution order — first match wins:
+
+**1. `MARIADB_PROFILES_FILE`** — path to a JSON file:
+
+```json
+{
+  "defaults": { "port": 3306, "read_only": true },
+  "profiles": {
+    "dev":       { "host": "test.db.example.com", "user": "reader", "password": "${DEV_DB_PW}", "database": "appdb" },
+    "dev-write": { "host": "test.db.example.com", "user": "writer", "password": "${DEV_DB_WPW}", "database": "appdb", "read_only": false },
+    "reporting-prod": { "host": "reporting.db.example.com", "user": "reader", "password": "${REPORTING_DB_PW}", "database": "appdb" }
+  }
+}
+```
+
+Any string may use `${ENV_VAR}`, so the file can hold hosts and usernames while passwords
+stay in the environment. The server warns if the file is group/world readable — keep it at
+`chmod 600`.
+
+**2. `MARIADB_PROFILES`** — comma separated names, each configured through env vars:
+
+```
+MARIADB_PROFILES=dev,reporting-prod
+MARIADB_PROFILE_DEV_HOST=test.db.example.com
+MARIADB_PROFILE_DEV_USER=reader
+MARIADB_PROFILE_DEV_PASSWORD=...
+MARIADB_PROFILE_DEV_DATABASE=appdb
+MARIADB_PROFILE_DEV_READ_ONLY=false
+MARIADB_PROFILE_REPORTING_PROD_HOST=reporting.db.example.com
+...
+```
+
+The env infix is the profile name upper-cased with non-alphanumerics replaced by `_`
+(`reporting-prod` -> `REPORTING_PROD`). Per-profile keys: `HOST`, `PORT`, `USER`, `PASSWORD`,
+`DATABASE`, `CHARSET`, `READ_ONLY`, `MAX_POOL_SIZE`, `SSL`, `SSL_CA`, `SSL_CERT`,
+`SSL_KEY`, `SSL_VERIFY_CERT`, `SSL_VERIFY_IDENTITY`.
+
+**3. Neither set** — the historical single `DB_*` connection is exposed as profile
+`default` and `profile` may be omitted. Existing single-endpoint registrations keep
+working with no change.
+
+### Behaviour notes
+
+- **`read_only` is per profile** and defaults to `true`. A write against a read-only
+  profile is refused *before* a connection is acquired.
+- **Pools are lazy.** Carrying 15 profiles costs 15 dicts, not 15 open connections; a pool
+  opens on that profile's first query. The single-`DB_*` case still connects at startup so
+  bad credentials fail fast.
+- **`MARIADB_EAGER_PROFILES`** — comma separated names (or `*`) to connect at startup.
+- **`profile` is required once more than one profile is configured.** Omitting it raises an
+  error listing the valid names, so a query cannot silently land on the wrong endpoint.
+- `list_profiles` never returns credentials.
+
+---
+
 ## Configuration & Environment Variables
 
 All configuration is via environment variables (typically set in a `.env` file):

@@ -1,18 +1,37 @@
 # server.py
 
 # Import configuration settings
+# Connection settings now live on DbProfile (see profiles.py); config keeps the
+# process-wide knobs.
 from config import (
-    DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
-    DB_SSL, DB_SSL_CA, DB_SSL_CERT, DB_SSL_KEY, DB_SSL_VERIFY_CERT, DB_SSL_VERIFY_IDENTITY,
-    MCP_READ_ONLY, MCP_MAX_POOL_SIZE, MCP_BLOCK_SENSITIVE_SHOW, EMBEDDING_PROVIDER,
+    MCP_BLOCK_SENSITIVE_SHOW, EMBEDDING_PROVIDER,
     ALLOWED_ORIGINS, ALLOWED_HOSTS,
     logger
 )
 
 import asyncio
 import argparse
+import contextlib
+import contextvars
 import re
 from typing import List, Dict, Any, Optional
+
+from profiles import (
+    DbProfile,
+    ProfileConfigError,
+    eager_profile_names,
+    load_profiles,
+    replace,
+)
+
+# Which connection profile the current tool call is bound to.
+# Set by the tool wrappers in register_tools() so the ~20 internal helpers that funnel
+# into _execute_query() need no signature change; contextvars propagate across awaits
+# within a task, so concurrent tool calls cannot bleed into each other.
+_current_profile: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "mariadb_mcp_current_profile", default=None
+)
+
 from functools import partial
 import os
 import ssl
@@ -46,24 +65,48 @@ class MariaDBServer:
     """
     def __init__(self, server_name="MariaDB_Server", autocommit=True):
         self.mcp = FastMCP(server_name)
-        self.pool: Optional[asyncmy.Pool] = None
         self.autocommit = autocommit
-        self.is_read_only = MCP_READ_ONLY
-        self.block_sensitive_show = MCP_BLOCK_SENSITIVE_SHOW
+
+        self.profiles: Dict[str, DbProfile] = load_profiles()
+        self.default_profile: Optional[str] = (
+            next(iter(self.profiles)) if len(self.profiles) == 1 else None
+        )
+        # One pool per profile, created on first use.
+        self.pools: Dict[str, asyncmy.Pool] = {}
+        self._pool_locks: Dict[str, asyncio.Lock] = {}
+
         logger.info(f"Initializing {server_name}...")
-        if self.is_read_only:
-            logger.warning("Server running in READ-ONLY mode. Write operations are disabled.")
+        for prof in self.profiles.values():
+            logger.info(
+                f"Profile '{prof.name}' -> {prof.host}:{prof.port}"
+                f"/{prof.database or '(no default db)'} read_only={prof.read_only}"
+            )
+        if all(prof.read_only for prof in self.profiles.values()):
+            logger.warning("All profiles are READ-ONLY. Write operations are disabled.")
+
+        self.block_sensitive_show = MCP_BLOCK_SENSITIVE_SHOW
         if self.block_sensitive_show:
             logger.info("Sensitive SHOW commands (PROCESSLIST, GRANTS, VARIABLES, replication status, etc.) are blocked.")
         else:
             logger.warning("MCP_BLOCK_SENSITIVE_SHOW is disabled: sensitive SHOW commands are permitted.")
 
-    async def _warn_if_file_privilege_enabled(self) -> None:
-        if self.pool is None:
+    async def _warn_if_file_privilege_enabled(self, prof: Optional[DbProfile] = None,
+                                              pool: Optional[asyncmy.Pool] = None) -> None:
+        """Warn when a read-only profile connects as a user holding global FILE.
+
+        Pool creation passes the profile and its fresh pool explicitly, because pools are
+        per profile and created lazily so there is no single self.pool to inspect. Called
+        with no arguments it falls back to the profile bound to the current call.
+        """
+        if prof is None:
+            prof = self.resolve_profile()
+        if pool is None:
+            pool = self.pools.get(prof.name)
+        if pool is None:
             return
 
         try:
-            async with self.pool.acquire() as conn:
+            async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute("SELECT CURRENT_USER()")
                     current_user_row = await cursor.fetchone()
@@ -95,13 +138,80 @@ class MariaDBServer:
 
                     if has_file_priv:
                         logger.error(
-                            "Connected database user has the global FILE privilege. "
-                            "This means the server is NOT running in a fully read-only posture, because MariaDB/MySQL allow "
+                            f"Profile '{prof.name}' connects as a user with the global FILE privilege. "
+                            "This means the profile is NOT in a fully read-only posture, because MariaDB/MySQL allow "
                             "filesystem read/write via SQL (e.g. SELECT ... INTO OUTFILE, LOAD DATA INFILE, LOAD_FILE()). "
-                            "This cannot be fixed client-side; revoke FILE for the database user you are connecting as."
+                            "This cannot be fixed client-side; revoke FILE for that database user."
                         )
         except Exception as e:
-            logger.debug(f"Unable to determine whether FILE privilege is enabled: {e}")
+            logger.debug(f"Unable to determine whether FILE privilege is enabled for '{prof.name}': {e}")
+
+    # --- Profile / pool plumbing ---
+
+    @property
+    def is_read_only(self) -> bool:
+        """Read-only state of the profile bound to the current call.
+
+        Kept as an attribute-style property so existing call sites and tests keep working.
+        """
+        return self.resolve_profile().read_only
+
+    @is_read_only.setter
+    def is_read_only(self, value: bool) -> None:
+        """Flip read-only on every profile.
+
+        Before profiles this was one global flag, and callers (including the upstream
+        test suite) assign to it directly. Applying it to all profiles keeps that
+        meaning: there is no single profile to single out, and silently touching only
+        one would leave the others contradicting the caller.
+        """
+        value = bool(value)
+        self.profiles = {
+            name: replace(prof, read_only=value) for name, prof in self.profiles.items()
+        }
+
+    @property
+    def pool(self) -> Optional[asyncmy.Pool]:
+        """Pool of the current (or single) profile. Back-compat with the pre-profile API."""
+        try:
+            name = self.resolve_profile().name
+        except (ProfileConfigError, ValueError):
+            return None
+        return self.pools.get(name)
+
+    @pool.setter
+    def pool(self, value: Optional[asyncmy.Pool]) -> None:
+        """Assign the current profile's pool.
+
+        `pool` was a plain attribute before profiles and callers still assign to it.
+        It targets the profile this call is bound to; with several profiles configured
+        and none selected, resolve_profile() raises rather than guessing which endpoint
+        the pool belongs to.
+        """
+        name = self.resolve_profile().name
+        if value is None:
+            self.pools.pop(name, None)
+        else:
+            self.pools[name] = value
+
+    def resolve_profile(self, profile: Optional[str] = None) -> DbProfile:
+        """Pick the profile for this call: explicit arg > context var > sole profile."""
+        name = profile or _current_profile.get() or self.default_profile
+        if name is None:
+            raise ValueError(
+                "No profile selected. Pass profile=<name>; available: "
+                f"{sorted(self.profiles)}"
+            )
+        try:
+            return self.profiles[name]
+        except KeyError:
+            raise ValueError(
+                f"Unknown profile '{name}'. Available: {sorted(self.profiles)}"
+            ) from None
+
+    def list_profiles(self) -> List[Dict[str, Any]]:
+        """Configured endpoints, without credentials."""
+        return [prof.describe() for prof in self.profiles.values()]
 
     async def create_vector_store(self, database_name: str, vector_store_name: str, model_name: Optional[str] = None, distance_function: Optional[str] = None) -> dict:
         """
@@ -122,45 +232,62 @@ class MariaDBServer:
         """
         return await self.create_vector_store_tool(database_name, vector_store_name, embedding_service, model_name, distance_function)
 
-    async def initialize_pool(self):
-        """Initializes the asyncmy connection pool within the running event loop."""
-        if not DB_USER:
-            logger.error("Cannot initialize pool: DB_USER is empty or missing")
-            raise ConnectionError("Missing DB_USER for pool initialization.")
-        if DB_PASSWORD is None:
-            logger.error("Cannot initialize pool: DB_PASSWORD is missing")
-            raise ConnectionError("Missing DB_PASSWORD for pool initialization.")
+    async def get_pool(self, profile: Optional[str] = None) -> asyncmy.Pool:
+        """Return the pool for a profile, creating it on first use."""
+        prof = self.resolve_profile(profile)
+        existing = self.pools.get(prof.name)
+        if existing is not None:
+            return existing
 
-        if self.pool is not None:
-            logger.info("Connection pool already initialized.")
-            return
+        lock = self._pool_locks.setdefault(prof.name, asyncio.Lock())
+        async with lock:
+            # Another task may have created it while we waited for the lock.
+            existing = self.pools.get(prof.name)
+            if existing is not None:
+                return existing
+            pool = await self._create_pool(prof)
+            self.pools[prof.name] = pool
+            return pool
+
+    async def initialize_pool(self, profile: Optional[str] = None):
+        """Eagerly create a pool. Retained for the pre-profile API and tests."""
+        await self.get_pool(profile)
+
+    async def _create_pool(self, prof: DbProfile) -> asyncmy.Pool:
+        """Creates the asyncmy connection pool for one profile."""
+        if not prof.user:
+            logger.error(f"Cannot initialize pool for '{prof.name}': user is empty or missing")
+            raise ConnectionError(f"Missing user for profile '{prof.name}'.")
+        if prof.password is None:
+            logger.error(f"Cannot initialize pool for '{prof.name}': password is missing")
+            raise ConnectionError(f"Missing password for profile '{prof.name}'.")
 
         try:
             ssl_context = None
-            if DB_SSL:
+            if prof.ssl:
                 ssl_context = ssl.create_default_context()
-                if DB_SSL_CA:
-                    ca_path = os.path.expanduser(DB_SSL_CA)
+                if prof.ssl_ca:
+                    ca_path = os.path.expanduser(prof.ssl_ca)
                     if os.path.exists(ca_path):
                         ssl_context.load_verify_locations(cafile=ca_path)
                         logger.info(f"Loaded SSL CA certificate: {ca_path}")
                     else:
                         logger.warning(f"SSL CA certificate file not found: {ca_path}")
 
-                if DB_SSL_CERT and DB_SSL_KEY:
-                    cert_path = os.path.expanduser(DB_SSL_CERT)
-                    key_path = os.path.expanduser(DB_SSL_KEY)
+                if prof.ssl_cert and prof.ssl_key:
+                    cert_path = os.path.expanduser(prof.ssl_cert)
+                    key_path = os.path.expanduser(prof.ssl_key)
                     if os.path.exists(cert_path) and os.path.exists(key_path):
                         ssl_context.load_cert_chain(cert_path, key_path)
                         logger.info(f"Loaded SSL client certificate: {cert_path}")
                     else:
                         logger.warning(f"SSL client certificate files not found: cert={cert_path}, key={key_path}")
 
-                if not DB_SSL_VERIFY_CERT:
+                if not prof.ssl_verify_cert:
                     ssl_context.check_hostname = False
                     ssl_context.verify_mode = ssl.CERT_NONE
                     logger.info("SSL certificate verification disabled")
-                elif not DB_SSL_VERIFY_IDENTITY:
+                elif not prof.ssl_verify_identity:
                     ssl_context.check_hostname = False
                     ssl_context.verify_mode = ssl.CERT_REQUIRED
                     logger.info("SSL hostname verification disabled, certificate verification enabled")
@@ -172,58 +299,61 @@ class MariaDBServer:
                 logger.info("SSL disabled for database connection")
 
             pool_params = {
-                "host": DB_HOST,
-                "port": DB_PORT,
-                "user": DB_USER,
-                "password": DB_PASSWORD,
-                "db": DB_NAME,
+                "host": prof.host,
+                "port": prof.port,
+                "user": prof.user,
+                "password": prof.password,
+                "db": prof.database,
                 "minsize": 1,
-                "maxsize": MCP_MAX_POOL_SIZE,
+                "maxsize": prof.max_pool_size,
                 "autocommit": self.autocommit,
                 "pool_recycle": 3600
             }
-            if DB_SSL and ssl_context is not None:
+            if prof.ssl and ssl_context is not None:
                 pool_params["ssl"] = ssl_context
 
-            if DB_CHARSET:
-                pool_params["charset"] = DB_CHARSET
-                logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE}, charset: {DB_CHARSET})")
+            if prof.charset:
+                pool_params["charset"] = prof.charset
+                logger.info(f"Creating connection pool [{prof.name}] for {prof.user}@{prof.host}:{prof.port}/{prof.database} (max size: {prof.max_pool_size}, charset: {prof.charset})")
             else:
-                logger.info(f"Creating connection pool for {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME} (max size: {MCP_MAX_POOL_SIZE})")
-            
-            self.pool = await create_safe_pool(**pool_params)
-            logger.info("Connection pool initialized successfully.")
-            if self.is_read_only:
-                await self._warn_if_file_privilege_enabled()
+                logger.info(f"Creating connection pool [{prof.name}] for {prof.user}@{prof.host}:{prof.port}/{prof.database} (max size: {prof.max_pool_size})")
+
+            pool = await create_safe_pool(**pool_params)
+            logger.info(f"Connection pool [{prof.name}] initialized successfully.")
+            if prof.read_only:
+                await self._warn_if_file_privilege_enabled(prof, pool)
+            return pool
         except AsyncMyError as e:
-            logger.error(f"Failed to initialize database connection pool: {e}", exc_info=True)
-            self.pool = None
+            logger.error(f"Failed to initialize connection pool [{prof.name}]: {e}", exc_info=True)
             raise
         except Exception as e:
-            logger.error(f"An unexpected error occurred during pool initialization: {e}", exc_info=True)
-            self.pool = None
+            logger.error(f"An unexpected error occurred initializing pool [{prof.name}]: {e}", exc_info=True)
             raise
 
     async def close_pool(self):
-        """Closes the connection pool gracefully."""
-        if self.pool:
-            logger.info("Closing database connection pool...")
+        """Closes every open connection pool gracefully."""
+        for name, pool in list(self.pools.items()):
+            logger.info(f"Closing database connection pool [{name}]...")
             try:
-                self.pool.close()
-                await self.pool.wait_closed()
-                logger.info("Database connection pool closed.")
+                pool.close()
+                await pool.wait_closed()
+                logger.info(f"Database connection pool [{name}] closed.")
             except Exception as e:
-                logger.error(f"Error closing connection pool: {e}", exc_info=True)
+                logger.error(f"Error closing connection pool [{name}]: {e}", exc_info=True)
             finally:
-                self.pool = None
+                self.pools.pop(name, None)
 
-    async def _execute_query(self, sql: str, params: Optional[tuple] = None, database: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Helper function to execute SELECT queries using the pool."""
-        if self.pool is None:
-            logger.error("Connection pool is not initialized.")
-            raise RuntimeError("Database connection pool not available.")
+    # Kept for readability at call sites that close everything.
+    close_pools = close_pool
 
-        allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
+    async def _execute_query(self, sql: str, params: Optional[tuple] = None, database: Optional[str] = None,
+                             profile: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Helper function to execute SELECT queries using the pool.
+
+        The profile comes from the explicit argument, otherwise from the context var the
+        tool wrapper set for this call.
+        """
+        prof = self.resolve_profile(profile)
 
         # Build a normalized string for validation that reflects what MariaDB
         # will actually execute. This must never *remove* content that the
@@ -254,13 +384,15 @@ class MariaDBServer:
         sql_normalized = sql_normalized.replace('*/', ' ')
         sql_normalized = sql_normalized.strip()
 
+        allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
+
         query_upper = sql_normalized.upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
 
-        if self.is_read_only and not is_allowed_read_query:
-             logger.warning(f"Blocked potentially non-read-only query in read-only mode: {sql[:100]}...")
-             raise PermissionError("Operation forbidden: Server is in read-only mode.")
-        if self.is_read_only:
+        if prof.read_only and not is_allowed_read_query:
+             logger.warning(f"Blocked potentially non-read-only query on read-only profile '{prof.name}': {sql[:100]}...")
+             raise PermissionError(f"Operation forbidden: profile '{prof.name}' is in read-only mode.")
+        if prof.read_only:
             # Check for LOAD_FILE() function (case-insensitive, outside strings/inert comments)
             if re.search(r'\bLOAD_FILE\s*\(', query_upper):
                 logger.warning(f"Blocked query containing LOAD_FILE(): {sql[:100]}...")
@@ -288,19 +420,22 @@ class MariaDBServer:
             logger.warning(f"Blocked sensitive SHOW query: {sql[:100]}...")
             raise PermissionError("Operation forbidden: this SHOW variant is blocked by MCP_BLOCK_SENSITIVE_SHOW.")
 
-        logger.info(f"Executing query (DB: {database or DB_NAME}): {sql[:100]}...")
+        logger.info(f"Executing query [{prof.name}] (DB: {database or prof.database}): {sql[:100]}...")
         if params:
             logger.debug(f"Parameters: {params}")
 
+        # Acquire only after the read-only gate: a blocked write must not open a connection.
+        pool = await self.get_pool(prof.name)
+
         conn = None
         try:
-            async with self.pool.acquire() as conn:
+            async with pool.acquire() as conn:
                 async with conn.cursor(cursor=asyncmy.cursors.DictCursor) as cursor:
                     current_db_query = "SELECT DATABASE()"
                     await cursor.execute(current_db_query)
                     current_db_result = await cursor.fetchone()
                     current_db_name = current_db_result.get('DATABASE()') if current_db_result else None
-                    pool_db_name = DB_NAME
+                    pool_db_name = prof.database
                     actual_current_db = current_db_name or pool_db_name
 
                     if database and database != actual_current_db:
@@ -555,7 +690,7 @@ class MariaDBServer:
 
     async def execute_sql(self, sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
         """
-        Executes a SQL query (primarily SELECT, SHOW, DESCRIBE) against a specified database
+        Executes a read-only SQL query (primarily SELECT, EXPLAIN, SHOW, DESCRIBE) against a specified database
         and returns the results. Uses parameterized queries for safety.
         Example `parameters`: ["value1", 123] corresponding to %s placeholders in `sql_query`.
         """
@@ -930,70 +1065,132 @@ class MariaDBServer:
             logger.error(f"Failed to search vector store {database_name}.{vector_store_name}: {e}", exc_info=True)
             return []
             
+    @contextlib.asynccontextmanager
+    async def _profile_scope(self, profile: Optional[str]):
+        """Bind one tool call to a connection profile.
+
+        Validates eagerly so an unknown/missing name fails with the list of valid names
+        instead of surfacing later as a confusing pool error.
+        """
+        prof = self.resolve_profile(profile)
+        token = _current_profile.set(prof.name)
+        try:
+            yield prof
+        finally:
+            _current_profile.reset(token)
+
     # --- Tool Registration (Synchronous) ---
     def register_tools(self):
-        """Registers the class methods as MCP tools using the instance. This is synchronous."""
-        if self.pool is None:
-             logger.error("Cannot register tools: Database pool is not initialized.")
-             raise RuntimeError("Database pool must be initialized before registering tools.")
+        """Registers the class methods as MCP tools using the instance. This is synchronous.
+
+        Pools are created on first use, so tools can be registered before any connection
+        exists. That is what lets one process carry many endpoints cheaply.
+        """
+        @self.mcp.tool
+        async def list_profiles() -> List[Dict[str, Any]]:
+            """Lists the configured connection profiles (host, port, database, read_only).
+
+            Credentials are never returned. Use the 'profile' argument of the other tools
+            to pick one.
+            """
+            return self.list_profiles()
 
         @self.mcp.tool
-        async def list_databases() -> List[str]:
-            """Lists all accessible databases on the connected MariaDB server."""
-            return await self.list_databases()
-            
+        async def list_databases(profile: Optional[str] = None) -> List[str]:
+            """Lists all accessible databases on the connected MariaDB server.
+
+            profile: which configured connection to use. Call list_profiles() to see the
+            names; omit only when a single profile is configured.
+            """
+            async with self._profile_scope(profile):
+                return await self.list_databases()
+
         @self.mcp.tool
-        async def list_tables(database_name: str) -> List[str]:
-            """Lists all tables within the specified database."""
-            return await self.list_tables(database_name)
-            
+        async def list_tables(database_name: str, profile: Optional[str] = None) -> List[str]:
+            """Lists all tables within the specified database.
+
+            profile: which configured connection to use. Call list_profiles() to see the
+            names; omit only when a single profile is configured.
+            """
+            async with self._profile_scope(profile):
+                return await self.list_tables(database_name)
+
         @self.mcp.tool
-        async def get_table_schema(database_name: str, table_name: str) -> Dict[str, Any]:
-            """Retrieves the schema for a specific table in a database."""
-            return await self.get_table_schema(database_name, table_name)
-            
+        async def get_table_schema(database_name: str, table_name: str, profile: Optional[str] = None) -> Dict[str, Any]:
+            """Retrieves the schema for a specific table in a database.
+
+            profile: which configured connection to use. Call list_profiles() to see the
+            names; omit only when a single profile is configured.
+            """
+            async with self._profile_scope(profile):
+                return await self.get_table_schema(database_name, table_name)
+
         @self.mcp.tool
-        async def get_table_schema_with_relations(database_name: str, table_name: str) -> Dict[str, Any]:
-            """Retrieves table schema with foreign key relationship information."""
-            return await self.get_table_schema_with_relations(database_name, table_name)
-            
+        async def get_table_schema_with_relations(database_name: str, table_name: str, profile: Optional[str] = None) -> Dict[str, Any]:
+            """Retrieves table schema with foreign key relationship information.
+
+            profile: which configured connection to use. Call list_profiles() to see the
+            names; omit only when a single profile is configured.
+            """
+            async with self._profile_scope(profile):
+                return await self.get_table_schema_with_relations(database_name, table_name)
+
         @self.mcp.tool
-        async def execute_sql(sql_query: str, database_name: str, parameters: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
-            """Executes a read-only SQL query against a specified database."""
-            return await self.execute_sql(sql_query, database_name, parameters)
-            
+        async def execute_sql(sql_query: str, database_name: str, parameters: Optional[List[Any]] = None,
+                              profile: Optional[str] = None) -> List[Dict[str, Any]]:
+            """Executes a read-only SQL query against a specified database.
+
+            profile: which configured connection to use. Call list_profiles() to see the
+            names; omit only when a single profile is configured.
+            """
+            async with self._profile_scope(profile):
+                return await self.execute_sql(sql_query, database_name, parameters)
+
         @self.mcp.tool
-        async def create_database(database_name: str) -> Dict[str, Any]:
-            """Creates a new database if it doesn't exist."""
-            return await self.create_database(database_name)
-            
+        async def create_database(database_name: str, profile: Optional[str] = None) -> Dict[str, Any]:
+            """Creates a new database if it doesn't exist.
+
+            profile: which configured connection to use. Call list_profiles() to see the
+            names; omit only when a single profile is configured.
+            """
+            async with self._profile_scope(profile):
+                return await self.create_database(database_name)
+
         if EMBEDDING_PROVIDER is not None:
             @self.mcp.tool
-            async def create_vector_store(database_name: str, vector_store_name: str, model_name: Optional[str] = None, distance_function: Optional[str] = None) -> dict:
+            async def create_vector_store(database_name: str, vector_store_name: str, model_name: Optional[str] = None,
+                                          distance_function: Optional[str] = None, profile: Optional[str] = None) -> dict:
                 """Creates a table which stores embeddings."""
-                return await self.create_vector_store(database_name, vector_store_name, model_name, distance_function)
-                
+                async with self._profile_scope(profile):
+                    return await self.create_vector_store(database_name, vector_store_name, model_name, distance_function)
+
             @self.mcp.tool
-            async def list_vector_stores(database_name: str) -> List[str]:
+            async def list_vector_stores(database_name: str, profile: Optional[str] = None) -> List[str]:
                 """Lists all vector stores in a database."""
-                return await self.list_vector_stores(database_name)
-                
+                async with self._profile_scope(profile):
+                    return await self.list_vector_stores(database_name)
+
             @self.mcp.tool
-            async def delete_vector_store(database_name: str, vector_store_name: str) -> Dict[str, Any]:
+            async def delete_vector_store(database_name: str, vector_store_name: str, profile: Optional[str] = None) -> Dict[str, Any]:
                 """Deletes a vector store from the specified database."""
-                return await self.delete_vector_store(database_name, vector_store_name)
-                
+                async with self._profile_scope(profile):
+                    return await self.delete_vector_store(database_name, vector_store_name)
+
             @self.mcp.tool
-            async def insert_docs_vector_store(database_name: str, vector_store_name: str, documents: List[str], metadata: Optional[List[dict]] = None) -> dict:
+            async def insert_docs_vector_store(database_name: str, vector_store_name: str, documents: List[str],
+                                               metadata: Optional[List[dict]] = None, profile: Optional[str] = None) -> dict:
                 """Insert a batch of documents into a vector store."""
-                return await self.insert_docs_vector_store(database_name, vector_store_name, documents, metadata)
-                
+                async with self._profile_scope(profile):
+                    return await self.insert_docs_vector_store(database_name, vector_store_name, documents, metadata)
+
             @self.mcp.tool
-            async def search_vector_store(user_query: str, database_name: str, vector_store_name: str, k: int = 7) -> list:
+            async def search_vector_store(user_query: str, database_name: str, vector_store_name: str, k: int = 7,
+                                          profile: Optional[str] = None) -> list:
                 """Search a vector store for similar documents."""
-                return await self.search_vector_store(user_query, database_name, vector_store_name, k)
-                
-        logger.info("Registered MCP tools explicitly.")
+                async with self._profile_scope(profile):
+                    return await self.search_vector_store(user_query, database_name, vector_store_name, k)
+
+        logger.info(f"Registered MCP tools explicitly for {len(self.profiles)} profile(s).")
 
     # --- Async Main Server Logic ---
     async def run_async_server(self, transport="stdio", host="127.0.0.1", port=9001, path="/mcp"):
@@ -1002,8 +1199,12 @@ class MariaDBServer:
         This method should be the target for anyio.run().
         """
         try:
-            # 1. Initialize pool within the anyio-managed loop
-            await self.initialize_pool()
+            # 1. Pools are lazy: carrying N endpoints must not mean opening N connections
+            #    at startup. Connect eagerly only for the profiles asked for, so that a
+            #    single-endpoint setup can still fail fast on bad credentials.
+            for name in eager_profile_names(self.profiles):
+                logger.info(f"Eagerly connecting profile '{name}'...")
+                await self.get_pool(name)
 
             # 2. Register tools (synchronous part, but called from async context)
             self.register_tools()
