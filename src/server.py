@@ -38,6 +38,66 @@ if EMBEDDING_PROVIDER is not None:
 
 from asyncmy.errors import Error as AsyncMyError
 
+
+_CTE_BODY_KEYWORDS = ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'REPLACE')
+
+
+def _cte_statement_keyword(sql_upper: str) -> str:
+    """
+    Given a normalized, uppercased statement that starts with WITH, return the
+    keyword of the statement the CTE list introduces ('SELECT', 'UPDATE', ...),
+    or '' if none was found.
+
+    The CTE definitions themselves are parenthesised, so the first of these
+    keywords seen at paren depth zero is the main statement. CTE names cannot
+    collide with them because they are all reserved words.
+    """
+    i = len('WITH')
+    depth = 0
+    n = len(sql_upper)
+    while i < n:
+        char = sql_upper[i]
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+        elif depth == 0 and (char.isalpha() or char == '_'):
+            j = i
+            while j < n and (sql_upper[j].isalnum() or sql_upper[j] == '_'):
+                j += 1
+            if sql_upper[i:j] in _CTE_BODY_KEYWORDS:
+                return sql_upper[i:j]
+            i = j
+            continue
+        i += 1
+    return ''
+
+
+def _analyze_statement_keyword(sql_upper: str) -> str:
+    """
+    Given a normalized, uppercased statement starting with ANALYZE, return the
+    keyword of the statement ANALYZE wraps.
+
+    Unlike EXPLAIN, MariaDB's ANALYZE *runs* the statement and reports what
+    actually happened, so `ANALYZE DELETE ...` really deletes and
+    `ANALYZE TABLE t` rewrites index statistics. Only the SELECT forms are
+    reads. Accepts the optional FORMAT=JSON modifier in between.
+    """
+    rest = sql_upper[len('ANALYZE'):].strip()
+
+    # ANALYZE [FORMAT=JSON] <statement>
+    match = re.match(r'FORMAT\s*=\s*\w+\s+', rest)
+    if match:
+        rest = rest[match.end():]
+
+    if rest.startswith('WITH'):
+        return _cte_statement_keyword(rest)
+
+    word = re.match(r'[A-Z_]+', rest)
+
+    return word.group(0) if word else ''
+
+
 # --- MariaDB MCP Server Class ---
 class MariaDBServer:
     """
@@ -223,7 +283,10 @@ class MariaDBServer:
             logger.error("Connection pool is not initialized.")
             raise RuntimeError("Database connection pool not available.")
 
-        allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE')
+        # EXPLAIN never executes its statement, so it is a read whatever it
+        # wraps. WITH and ANALYZE are admitted only conditionally, by the two
+        # checks below, because both can introduce a write.
+        allowed_prefixes = ('SELECT', 'SHOW', 'DESC', 'DESCRIBE', 'USE', 'EXPLAIN', 'WITH', 'ANALYZE')
 
         # Build a normalized string for validation that reflects what MariaDB
         # will actually execute. This must never *remove* content that the
@@ -256,6 +319,20 @@ class MariaDBServer:
 
         query_upper = sql_normalized.upper()
         is_allowed_read_query = any(query_upper.startswith(prefix) for prefix in allowed_prefixes)
+
+        # A leading WITH clause is only a read if the statement it introduces
+        # is a SELECT. MariaDB also accepts WITH ... UPDATE / DELETE / INSERT,
+        # so the prefix alone does not prove the query is read-only.
+        if is_allowed_read_query and query_upper.startswith('WITH'):
+            if _cte_statement_keyword(query_upper) != 'SELECT':
+                is_allowed_read_query = False
+
+        # ANALYZE runs the statement it wraps, unlike EXPLAIN, so only the
+        # SELECT forms are reads: ANALYZE DELETE really deletes, and
+        # ANALYZE TABLE rewrites index statistics.
+        if is_allowed_read_query and query_upper.startswith('ANALYZE'):
+            if _analyze_statement_keyword(query_upper) != 'SELECT':
+                is_allowed_read_query = False
 
         if self.is_read_only and not is_allowed_read_query:
              logger.warning(f"Blocked potentially non-read-only query in read-only mode: {sql[:100]}...")

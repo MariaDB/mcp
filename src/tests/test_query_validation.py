@@ -598,6 +598,98 @@ class TestPrivilegeWarningIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(warned)
 
 
+class TestWithAnalyzeValidation(TestQueryValidation):
+    """
+    WITH and ANALYZE are allowed prefixes, but neither is a read on its own.
+
+    MariaDB accepts WITH ... UPDATE / DELETE / INSERT, and ANALYZE *runs* the
+    statement it wraps (unlike EXPLAIN), so `ANALYZE DELETE` really deletes and
+    `ANALYZE TABLE` rewrites index statistics. Only the SELECT forms are reads.
+    """
+
+    async def _assert_read_allowed(self, query: str):
+        try:
+            await self.server._execute_query(query)
+        except PermissionError as exc:
+            self.fail(f"Read query was blocked: {query} ({exc})")
+        except Exception:
+            # Reaching the pool means validation passed, which is all we test.
+            pass
+
+    async def _assert_write_blocked(self, query: str):
+        with self.assertRaises(PermissionError) as context:
+            await self.server._execute_query(query)
+        self.assertIn("read-only mode", str(context.exception))
+
+    def test_with_select_allowed(self):
+        self.loop.run_until_complete(
+            self._assert_read_allowed("WITH t AS (SELECT 1) SELECT * FROM t"))
+
+    def test_with_recursive_select_allowed(self):
+        self.loop.run_until_complete(self._assert_read_allowed(
+            "WITH RECURSIVE t AS (SELECT 1 UNION SELECT n+1 FROM t) SELECT * FROM t"))
+
+    def test_with_multiple_ctes_allowed(self):
+        self.loop.run_until_complete(self._assert_read_allowed(
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b"))
+
+    def test_with_update_blocked(self):
+        self.loop.run_until_complete(self._assert_write_blocked(
+            "WITH t AS (SELECT 1) UPDATE users SET name = 'x'"))
+
+    def test_with_delete_blocked(self):
+        self.loop.run_until_complete(
+            self._assert_write_blocked("WITH t AS (SELECT 1) DELETE FROM users"))
+
+    def test_with_insert_blocked(self):
+        self.loop.run_until_complete(self._assert_write_blocked(
+            "WITH t AS (SELECT 1) INSERT INTO users SELECT * FROM t"))
+
+    def test_with_write_keyword_in_string_is_not_the_body(self):
+        self.loop.run_until_complete(self._assert_read_allowed(
+            "WITH t AS (SELECT 'delete from users') SELECT * FROM t"))
+
+    def test_analyze_select_allowed(self):
+        self.loop.run_until_complete(
+            self._assert_read_allowed("ANALYZE SELECT * FROM users"))
+
+    def test_analyze_format_json_select_allowed(self):
+        self.loop.run_until_complete(
+            self._assert_read_allowed("ANALYZE FORMAT=JSON SELECT * FROM users"))
+
+    def test_analyze_with_select_allowed(self):
+        self.loop.run_until_complete(self._assert_read_allowed(
+            "ANALYZE WITH t AS (SELECT 1) SELECT * FROM t"))
+
+    def test_analyze_update_blocked(self):
+        self.loop.run_until_complete(
+            self._assert_write_blocked("ANALYZE UPDATE users SET name = 'x'"))
+
+    def test_analyze_delete_blocked(self):
+        self.loop.run_until_complete(
+            self._assert_write_blocked("ANALYZE DELETE FROM users"))
+
+    def test_analyze_with_delete_blocked(self):
+        self.loop.run_until_complete(self._assert_write_blocked(
+            "ANALYZE WITH t AS (SELECT 1) DELETE FROM users"))
+
+    def test_analyze_table_blocked(self):
+        """ANALYZE TABLE rewrites index statistics, so it is a write."""
+        self.loop.run_until_complete(self._assert_write_blocked("ANALYZE TABLE users"))
+
+    def test_analyze_local_table_blocked(self):
+        self.loop.run_until_complete(
+            self._assert_write_blocked("ANALYZE LOCAL TABLE users"))
+
+    def test_with_cannot_hide_a_write_in_an_executable_comment(self):
+        """
+        Executable comments run as live SQL, so the WITH check must see them.
+        This is the upstream /*! ... */ bypass applied to the WITH path.
+        """
+        self.loop.run_until_complete(self._assert_write_blocked(
+            "WITH t AS (SELECT 1) /*!DELETE FROM users*/"))
+
+
 if __name__ == '__main__':
     print("=" * 70)
     print("Testing SQL Query Validation Security Features")
