@@ -10,6 +10,8 @@ from asyncmy.connection import Connection
 from asyncmy.constants.CLIENT import MULTI_STATEMENTS, LOCAL_FILES
 from asyncmy.pool import Pool
 from asyncmy.contexts import _PoolContextManager
+from asyncmy import converters
+from asyncmy.constants.FIELD_TYPE import DATE, DATETIME, TIMESTAMP
 
 from config import MCP_READ_ONLY
 
@@ -39,13 +41,46 @@ class SafeConnection(Connection):
         # Now proceed with normal connection
         return await super().connect()
 
+    def close(self):
+        """
+        Close the socket and mark the connection as disconnected.
+
+        asyncmy's close() drops the socket but leaves `connected` True, so
+        Pool.release() would put the dead connection back into the free list.
+        """
+        super().close()
+        self._connected = False
+
+
+def _lenient(convert):
+    """
+    Wrap an asyncmy date/time decoder so unrepresentable values (e.g. MariaDB
+    zero dates like '0000-00-00 00:00:00') come back as the raw string.
+
+    asyncmy's convert_date tries to return the raw string on failure, but it is
+    declared to return datetime.date, so Cython raises TypeError instead and
+    aborts the result set mid-read.
+    """
+    def wrapper(obj):
+        try:
+            return convert(obj)
+        except (TypeError, ValueError):
+            return obj.decode("ascii") if isinstance(obj, (bytes, bytearray)) else obj
+    return wrapper
+
+
+SAFE_CONVERSIONS = dict(converters.conversions)
+for _field_type in (DATE, DATETIME, TIMESTAMP):
+    SAFE_CONVERSIONS[_field_type] = _lenient(converters.conversions[_field_type])
+
 
 async def safe_connect(**kwargs) -> SafeConnection:
     """
     Create a SafeConnection instead of a regular Connection.
-    
+
     This is a drop-in replacement for asyncmy.connect() that uses SafeConnection.
     """
+    kwargs.setdefault("conv", SAFE_CONVERSIONS)
     conn = SafeConnection(**kwargs)
     await conn.connect()
     return conn
