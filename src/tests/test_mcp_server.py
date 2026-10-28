@@ -5,6 +5,7 @@ from fastmcp.client import Client
 from server import MariaDBServer
 import json
 import random
+from unittest.mock import patch
 from asyncmy.errors import OperationalError
 
 # This file contains integration tests for the MCP server
@@ -257,6 +258,16 @@ class TestMariaDBMCPTools(unittest.IsolatedAsyncioTestCase):
                     self.fail("Expected an exception, but none was raised")
                 except Exception as e:
                     pass
+            tg.cancel_scope.cancel()
+
+    @patch("server.MCP_MAX_STATEMENT_TIME", 1.5)
+    async def test_max_statement_time(self):
+        async with anyio.create_task_group() as tg:
+            await self.task_group_helper(tg)
+            async with self.client:
+                result = await self.client.call_tool('execute_sql', {'sql_query': 'SELECT @@max_statement_time AS t', 'database_name': 'information_schema'})
+                result = self.extract_result(result)
+                self.assertEqual(result[0]['t'], 1.5)
             tg.cancel_scope.cancel()
 
 if __name__ == "__main__":

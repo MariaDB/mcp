@@ -148,6 +148,7 @@ All configuration is via environment variables (typically set in a `.env` file):
 | `MCP_READ_ONLY`        | Enforce read-only SQL mode (`true`/`false`)            | No       | `true`       |
 | `MCP_BLOCK_SENSITIVE_SHOW` | Block sensitive `SHOW` commands (`PROCESSLIST`, `GRANTS`, `VARIABLES`, `MASTER`/`REPLICA STATUS`, `BINARY LOGS`, etc.) that can leak cross-connection query text, credentials/privileges, or replication topology. Set independently of `MCP_READ_ONLY` (`true`/`false`) | No | `true` |
 | `MCP_MAX_POOL_SIZE`    | Max DB connection pool size                            | No       | `10`         |
+| `MCP_MAX_STATEMENT_TIME` | Seconds after which MariaDB aborts a statement, through [`max_statement_time`](https://mariadb.com/docs/server/ha-and-performance/optimization-and-tuning/query-optimizations/aborting-statements). `0` keeps the server default | No | `0` |
 | `EMBEDDING_PROVIDER`   | Embedding provider (`openai`/`gemini`/`huggingface`)   | No     |`None`(Disabled)|
 | `OPENAI_API_KEY`       | API key for OpenAI embeddings                          | Yes (if EMBEDDING_PROVIDER=openai) | |
 | `GEMINI_API_KEY`       | API key for Gemini embeddings                          | Yes (if EMBEDDING_PROVIDER=gemini) | |

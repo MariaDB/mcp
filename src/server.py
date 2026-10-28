@@ -4,7 +4,7 @@
 from config import (
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_CHARSET,
     DB_SSL, DB_SSL_CA, DB_SSL_CERT, DB_SSL_KEY, DB_SSL_VERIFY_CERT, DB_SSL_VERIFY_IDENTITY,
-    MCP_READ_ONLY, MCP_MAX_POOL_SIZE, MCP_BLOCK_SENSITIVE_SHOW, EMBEDDING_PROVIDER,
+    MCP_READ_ONLY, MCP_MAX_POOL_SIZE, MCP_MAX_STATEMENT_TIME, MCP_BLOCK_SENSITIVE_SHOW, EMBEDDING_PROVIDER,
     ALLOWED_ORIGINS, ALLOWED_HOSTS,
     logger
 )
@@ -184,6 +184,9 @@ class MariaDBServer:
             }
             if DB_SSL and ssl_context is not None:
                 pool_params["ssl"] = ssl_context
+
+            if MCP_MAX_STATEMENT_TIME > 0:
+                pool_params["init_command"] = f"SET SESSION max_statement_time = {MCP_MAX_STATEMENT_TIME}"
 
             if DB_CHARSET:
                 pool_params["charset"] = DB_CHARSET

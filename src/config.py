@@ -78,6 +78,9 @@ DB_SSL_VERIFY_IDENTITY = os.getenv("DB_SSL_VERIFY_IDENTITY", "false").lower() ==
 MCP_READ_ONLY = os.getenv("MCP_READ_ONLY", "true").lower() == "true"
 MCP_MAX_POOL_SIZE = int(os.getenv("MCP_MAX_POOL_SIZE", 10))
 
+# Seconds after which the server aborts a statement, 0 keeps the server default.
+MCP_MAX_STATEMENT_TIME = float(os.getenv("MCP_MAX_STATEMENT_TIME", 0))
+
 # Block sensitive SHOW commands (e.g. SHOW PROCESSLIST, SHOW GRANTS,
 # SHOW VARIABLES, SHOW MASTER/REPLICA STATUS, SHOW BINARY LOGS) that can leak
 # cross-connection query text, credentials/privileges, or replication
