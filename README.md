@@ -1,3 +1,18 @@
+**Subject:** 📢 Deprecation Notice: MariaDB MCP Server is moving (Effective Nov 3, 2026)
+
+Hello everyone,
+
+We are consolidating our AI tooling and want to let you know that effective **November 3, 2026**, this repository (`mariadb/mcp`) is officially deprecated.
+
+Going forward, all development, updates, and releases for the MariaDB MCP Server will take place in the official MariaDB AI Plugins repository.
+
+**Where to go next:**
+👉 [mariadb-corporation/ai-plugins](https://github.com/mariadb-corporation/ai-plugins)
+
+Thank you for your support here, and we look forward to seeing you over at the new repo!
+
+---
+
 # MCP MariaDB Server
 
 The MCP MariaDB Server provides a Model Context Protocol (MCP) interface for managing and querying MariaDB databases, supporting both standard SQL operations and advanced vector/embedding-based search. Designed for use with AI assistants, it enables seamless integration of AI-driven data workflows with relational and vector databases.
